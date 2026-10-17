@@ -1,0 +1,4 @@
+# /etc/rancher/k3s/config.yaml
+# Same as the original install flag: k3s server --secrets-encryption
+secrets-encryption: true
+write-kubeconfig-mode: "0600"

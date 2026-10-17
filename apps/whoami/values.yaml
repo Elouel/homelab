@@ -1,0 +1,4 @@
+image: traefik/whoami:v1.11.0
+# domain comes from the cluster (ConfigMap kube-system/homelab-values, created by bootstrap.sh from .env)
+domain: example.com
+# host: whoami.example.com   # optional override; defaults to whoami.<domain>

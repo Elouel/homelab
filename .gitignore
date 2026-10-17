@@ -1,0 +1,6 @@
+.secrets/
+.env
+*.tar.gz
+*.pem
+*.key
+*kubeconfig*

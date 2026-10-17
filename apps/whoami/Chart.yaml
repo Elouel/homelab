@@ -1,0 +1,4 @@
+apiVersion: v2
+name: whoami
+version: 0.1.0
+description: Example app - copy this folder to add a new one
