@@ -1,0 +1,18 @@
+#!/bin/sh
+# Blocks commits that contain secrets, passwords, keys or public IPs.
+# Rules: .gitleaks.toml   Enabled by: tools/setup-git-hooks.sh (git config core.hooksPath .githooks)
+# False positive? Add "# gitleaks:allow" at the end of the line, or put the
+# fingerprint printed below into .gitleaksignore.  Emergency bypass: git commit --no-verify
+
+GITLEAKS=$(command -v gitleaks || command -v gitleaks.exe)
+if [ -z "$GITLEAKS" ]; then
+  echo "pre-commit: gitleaks is not installed - commit blocked so nothing slips through." >&2
+  echo "  Windows:  winget install Gitleaks.Gitleaks   (then reopen the terminal)" >&2
+  echo "  macOS:    brew install gitleaks" >&2
+  echo "  Linux:    https://github.com/gitleaks/gitleaks/releases" >&2
+  exit 1
+fi
+
+ROOT=$(git rev-parse --show-toplevel)
+exec "$GITLEAKS" git --pre-commit --staged --redact --verbose --no-banner \
+  --config "$ROOT/.gitleaks.toml" "$ROOT"

@@ -1,0 +1,53 @@
+# One Argo CD Application per folder under apps/ (each folder is a Helm chart).
+# Applied by bootstrap.sh with ${GIT_REPO_URL} / ${GIT_BRANCH} filled from .env.
+# Matrix: (clusters labelled homelab/cluster-values=true) x (folders under apps/).
+# The cluster Secret argocd/in-cluster (written by bootstrap.sh) carries the private
+# cluster values as annotations; they are passed to every chart as .Values.domain / .Values.serverIP.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  homelab/cluster-values: "true"
+          - git:
+              repoURL: ${GIT_REPO_URL}
+              revision: ${GIT_BRANCH}
+              directories:
+                - path: apps/*
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io   # removing the folder deletes its resources
+    spec:
+      project: default
+      source:
+        repoURL: ${GIT_REPO_URL}
+        targetRevision: ${GIT_BRANCH}
+        path: '{{.path.path}}'
+        helm:
+          releaseName: '{{.path.basename}}'
+          valuesObject:
+            domain: '{{index .metadata.annotations "homelab/domain"}}'
+            serverIP: '{{index .metadata.annotations "homelab/server-ip"}}'
+      destination:
+        server: '{{.server}}'
+        namespace: '{{.path.basename}}'   # namespace = folder name
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+        retry:
+          limit: 5
+          backoff: { duration: 10s, factor: 2, maxDuration: 3m }

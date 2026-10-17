@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuilds the HomeLab single-node k3s + Rancher cluster.
+# Rebuilds the HomeLab single-node k3s + Argo CD cluster.
 # Run as root on a fresh Ubuntu 24.04 host, from the repo root:  sudo ./bootstrap.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -10,7 +10,8 @@ source ./.env
 
 SERVER_IP=${SERVER_IP:-$(curl -fsS https://api.ipify.org || hostname -I | awk '{print $1}')}
 BASE_DOMAIN=${BASE_DOMAIN:-${SERVER_IP}.sslip.io}
-RANCHER_HOSTNAME=${RANCHER_HOSTNAME:-rancher.${BASE_DOMAIN}}
+ARGOCD_HOSTNAME=${ARGOCD_HOSTNAME:-argocd.${BASE_DOMAIN}}
+GIT_BRANCH=${GIT_BRANCH:-main}
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 step(){ echo -e "\n==> $*"; }
 
@@ -24,17 +25,12 @@ kubectl -n kube-system rollout status deploy/traefik --timeout=5m 2>/dev/null ||
   { until kubectl -n kube-system get deploy traefik >/dev/null 2>&1; do sleep 5; done; \
     kubectl -n kube-system rollout status deploy/traefik --timeout=5m; }
 
-step "cluster values (kube-system/homelab-values) - read by Fleet apps via helm.valuesFrom"
-kubectl -n kube-system create configmap homelab-values \
-  --from-literal=values.yaml="$(printf 'serverIP: %s\ndomain: %s\n' "${SERVER_IP}" "${BASE_DOMAIN}")" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
 step "helm ${HELM_VERSION}"
 if ! command -v helm >/dev/null || ! helm version --short | grep -q "${HELM_VERSION}"; then
   curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION="${HELM_VERSION}" bash
 fi
 helm repo add jetstack https://charts.jetstack.io --force-update
-helm repo add rancher-stable https://releases.rancher.com/server-charts/stable --force-update
+helm repo add argo https://argoproj.github.io/argo-helm --force-update
 helm repo update
 
 step "cert-manager ${CERT_MANAGER_VERSION}"
@@ -42,23 +38,44 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   -n cert-manager --create-namespace --version "${CERT_MANAGER_VERSION}" \
   -f helm/cert-manager/values.yaml --wait --timeout 10m
 
-step "Rancher ${RANCHER_VERSION} at https://${RANCHER_HOSTNAME}"
-helm upgrade --install rancher rancher-stable/rancher \
-  -n cattle-system --create-namespace --version "${RANCHER_VERSION}" \
-  -f helm/rancher/values.yaml \
-  --set hostname="${RANCHER_HOSTNAME}" \
-  --set letsEncrypt.email="${LETSENCRYPT_EMAIL}" \
-  --set bootstrapPassword="${RANCHER_BOOTSTRAP_PASSWORD}"
-kubectl -n cattle-system rollout status deploy/rancher --timeout=15m
+step "Argo CD (chart ${ARGO_CD_CHART_VERSION}) at https://${ARGOCD_HOSTNAME}"
+helm upgrade --install argocd argo/argo-cd \
+  -n argocd --create-namespace --version "${ARGO_CD_CHART_VERSION}" \
+  -f helm/argo-cd/values.yaml \
+  --set global.domain="${ARGOCD_HOSTNAME}" \
+  --wait --timeout 10m
+
+step "cluster values (Secret argocd/in-cluster) - read by the apps ApplicationSet"
+# Registers the local cluster with Argo CD explicitly, so the cluster generator can select it by
+# label and pass its annotations (domain, serverIP) to every app as Helm values.
+kubectl -n argocd create secret generic in-cluster \
+  --from-literal=name=in-cluster \
+  --from-literal=server=https://kubernetes.default.svc \
+  --from-literal=config='{"tlsClientConfig":{"insecure":false}}' \
+  --dry-run=client -o yaml \
+| kubectl label --local -f - -o yaml \
+    argocd.argoproj.io/secret-type=cluster homelab/cluster-values=true \
+| kubectl annotate --local -f - -o yaml \
+    homelab/domain="${BASE_DOMAIN}" homelab/server-ip="${SERVER_IP}" \
+| kubectl apply -f -
 
 if [ -n "${GIT_REPO_URL:-}" ] && [[ "${GIT_REPO_URL}" != *"<user>"* ]]; then
-  step "GitOps: Fleet -> ${GIT_REPO_URL} (${GIT_BRANCH:-main})"
-  until kubectl get crd gitrepos.fleet.cattle.io >/dev/null 2>&1; do sleep 5; done
-  sed -e "s|\${GIT_REPO_URL}|${GIT_REPO_URL}|" -e "s|\${GIT_BRANCH}|${GIT_BRANCH:-main}|" \
-    fleet/gitrepo.yaml | kubectl apply -f -
+  step "GitOps: ApplicationSets -> ${GIT_REPO_URL} (${GIT_BRANCH})"
+  for f in argocd/*.yaml; do
+    sed -e "s|\${GIT_REPO_URL}|${GIT_REPO_URL}|g" -e "s|\${GIT_BRANCH}|${GIT_BRANCH}|g" "$f"
+    echo "---"
+  done | kubectl apply -f -
+  echo "Waiting for ClusterIssuer letsencrypt-prod (deployed by Argo CD from platform/)..."
+  if kubectl wait clusterissuer/letsencrypt-prod --for=condition=Ready --timeout=5m 2>/dev/null; then
+    kubectl -n argocd wait certificate/argocd-server-tls --for=condition=Ready --timeout=5m \
+      || echo "Argo CD certificate not ready yet - see docs/tls-and-ingress.md#debugging-a-certificate"
+  else
+    echo "ClusterIssuer not ready yet - check the platform-cluster-issuer app in Argo CD"
+  fi
 else
-  echo "GIT_REPO_URL not set in .env - skipping Fleet GitRepo"
+  echo "GIT_REPO_URL not set in .env - skipping ApplicationSets"
 fi
 
-echo -e "\nDone. Open https://${RANCHER_HOSTNAME}  (Let's Encrypt cert may take a minute or two)"
-echo "Rancher will now install fleet, rancher-webhook, turtles/CAPI and system-upgrade-controller by itself."
+echo -e "\nDone. Open https://${ARGOCD_HOSTNAME}  (user: admin)"
+echo "Initial admin password:"
+echo "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo"

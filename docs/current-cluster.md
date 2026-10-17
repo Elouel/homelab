@@ -1,5 +1,9 @@
 # Snapshot of the original cluster (2026-10-17)
 
+> **Outdated:** this is the Rancher + Fleet cluster the repo started from. The repo now builds a
+> k3s + Argo CD cluster (no Rancher). After rebuilding the server, re-export it
+> ([operations.md](operations.md#re-exporting-the-cluster)) and replace this page.
+
 From `tools/export-cluster.sh`. The raw archive is in `.secrets/k3s-export.tar.gz` (not committed).
 
 - Node: single VPS (IP in `.env`), Ubuntu 24.04.5, kernel 6.8.0-139, 8 GB RAM, no swap, ufw inactive

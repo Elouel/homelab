@@ -12,3 +12,19 @@ spec:
       - http01:
           ingress:
             ingressClassName: traefik
+---
+# Same as above against Let's Encrypt staging: untrusted certs, but much higher rate limits.
+# Use it while experimenting with a new app, then switch the annotation to letsencrypt-prod.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

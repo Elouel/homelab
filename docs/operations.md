@@ -1,0 +1,132 @@
+# Operations (day 2)
+
+All commands run as root on the server unless noted. `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml`
+(or use `k3s kubectl`).
+
+## Where to change what
+
+```mermaid
+flowchart TD
+  Q{"What do you want to change?"}
+  Q -->|"An app or platform component"| A["edit apps/ or platform/, git push - Argo CD deploys"]
+  Q -->|"Server IP, domain, hostname, repo URL"| B["edit .env on PC and server, run ./bootstrap.sh"]
+  Q -->|"k3s / Helm / cert-manager / Argo CD version"| C["edit versions.env, git push, git pull on server, run ./bootstrap.sh"]
+  Q -->|"k3s flags"| D["edit k3s/config.yaml, run ./bootstrap.sh, systemctl restart k3s"]
+  Q -->|"Argo CD / cert-manager chart values or ApplicationSets"| E["edit helm/*/values.yaml or argocd/, git push, git pull on server, run ./bootstrap.sh"]
+```
+
+Updating the server copy of the repo: `cd /root/homelab && git pull`.
+
+## Upgrades
+
+| Component | How | Watch out for |
+|---|---|---|
+| k3s | bump `K3S_VERSION`, re-run `bootstrap.sh` (the installer upgrades in place and restarts k3s) | Kubernetes versions supported by Argo CD and cert-manager. Move one minor version at a time. Short API downtime while it restarts |
+| Traefik, CoreDNS, … | come with the k3s version | — |
+| cert-manager | bump `CERT_MANAGER_VERSION`, re-run | Read the upgrade notes for each minor. CRDs are upgraded by the chart (`crds.enabled`) |
+| Argo CD | bump `ARGO_CD_CHART_VERSION`, re-run | Read the Argo CD upgrade notes for each minor (`docs/operator-manual/upgrading/` in the Argo CD repo) and the chart's changelog for renamed values. CRDs are upgraded by the chart (`crds.install`). Apps keep running during the upgrade |
+| Helm CLI | bump `HELM_VERSION`, re-run | — |
+| Apps | change the image tag or chart version in `apps/<name>`, push | — |
+
+Before any platform upgrade, take a [backup](#backups).
+
+## Backups
+
+What Git does **not** contain:
+
+| What | Where | How to back it up |
+|---|---|---|
+| `.env` | your PC | Keep a copy in a password manager |
+| Cluster datastore (all objects, Argo CD admin password) | `/var/lib/rancher/k3s/server/db/` (SQLite) | Cold copy, see below |
+| Secrets encryption key | `/var/lib/rancher/k3s/server/cred/` | Same tarball. **Without it, the encrypted Secrets in the DB are unreadable** |
+| Server token + certs | `/var/lib/rancher/k3s/server/token`, `.../tls/` | Same tarball |
+| App data (PVs) | `/var/lib/rancher/k3s/storage/` | `tar`/`restic` it, ideally with the app scaled to 0 |
+| Hand-made Secrets | in the DB | Covered by the DB backup. Also keep the values in your password manager |
+
+Cold datastore backup (about 1 minute of API downtime; running pods keep running):
+
+```bash
+systemctl stop k3s
+tar -czf /root/k3s-server-$(date +%F).tgz -C /var/lib/rancher/k3s/server db cred tls token
+systemctl start k3s
+# copy it off the server, e.g. from your PC:  scp root@<server>:/root/k3s-server-*.tgz .
+```
+
+The tarball contains secrets. Store it like a password, and **never** in this repo.
+(`k3s etcd-snapshot` does not apply here: it only works with embedded etcd, and this server uses SQLite.)
+
+Argo CD itself needs no separate backup: its configuration is in this repo and `.env`, and
+everything it deploys comes from Git. Only the admin password would have to be set again.
+
+## Restore / rebuild
+
+**A. Rebuild from Git (keeps nothing that isn't in Git or `.env`; new Argo CD admin password):**
+
+1. New Ubuntu 24.04 server. Update `SERVER_IP` in `.env` if the IP changed.
+2. `git clone`, `scp .env`, `./bootstrap.sh`.
+3. Recreate hand-made Secrets, then restore PV data into `/var/lib/rancher/k3s/storage/` before the apps start (or scale them down while restoring).
+
+**B. Restore the datastore (keeps everything). Test this before you rely on it:**
+
+1. Install the **same** k3s version with the same `k3s/config.yaml` (run `bootstrap.sh` up to the k3s step, or the installer by hand).
+2. `systemctl stop k3s`, then extract the tarball into `/var/lib/rancher/k3s/server/`, overwriting `db`, `cred`, `tls` and `token`.
+3. `systemctl start k3s`, then restore PV data.
+
+## Changing the server IP or domain
+
+1. Update `SERVER_IP` and/or `BASE_DOMAIN` in `.env` (your PC and the server).
+2. `./bootstrap.sh`. This updates the annotations on `argocd/in-cluster` and the Argo CD hostname.
+   The ApplicationSet re-renders every app with the new domain, Argo CD re-syncs them, and cert-manager
+   issues new certificates.
+3. If the node IP itself changed, the k3s API certificate may not include the new IP. Add `tls-san: [<new ip or name>]`
+   to the server's `/etc/rancher/k3s/config.yaml`, **not** to the committed file, and restart k3s.
+
+## Re-exporting the cluster
+
+`tools/export-cluster.sh` snapshots a running cluster (versions, k3s config, Helm releases and values,
+all non-noise objects, secret *names*), for comparing the live cluster against this repo:
+
+```powershell
+scp tools/export-cluster.sh root@<server>:/root/
+ssh root@<server> "bash /root/export-cluster.sh"
+scp root@<server>:/root/k3s-export.tar.gz .secrets/
+```
+
+Values are redacted by default. `INCLUDE_SECRETS=1` includes the real Secret values. Keep the result in `.secrets/` (git-ignored).
+Then update `docs/current-cluster.md` with anything that changed.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `kubectl` hangs / refused | `systemctl status k3s`, `journalctl -u k3s -e` |
+| Node `NotReady` | `journalctl -u k3s -e`, `df -h` (disk pressure), `free -h` |
+| Pods `Pending` | `kubectl describe pod`. Usually not enough memory on the 8 GB node, or a PVC isn't bound |
+| Argo CD UI down | `kubectl -n argocd get pods`, `kubectl -n argocd logs deploy/argocd-server` |
+| Argo CD login fails / forgot password | reset it: `kubectl -n argocd patch secret argocd-secret -p '{"data":{"admin.password":null,"admin.passwordMtime":null}}'`, then `kubectl -n argocd rollout restart deploy/argocd-server` (a new `argocd-initial-admin-secret` is generated) |
+| App not deployed | `kubectl -n argocd get applications`, see [gitops.md](gitops.md#checking-status) |
+| No Applications for `apps/` at all | the cluster Secret is missing or unlabelled: `kubectl -n argocd get secret in-cluster --show-labels`, re-run `./bootstrap.sh` |
+| Certificate missing | see [tls-and-ingress.md](tls-and-ingress.md#debugging-a-certificate) |
+| 404 from Traefik | Ingress host doesn't match the URL, or `ingressClassName` isn't `traefik`: `kubectl get ingress -A` |
+
+## Hardening TODO
+
+Known gaps on the current server, in priority order:
+
+1. **Firewall**: `bootstrap.sh` does not enable `ufw`, so 6443 (Kubernetes API) is open to the world. Suggested:
+   ```bash
+   ufw default deny incoming && ufw default allow outgoing
+   ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp
+   ufw allow from <your home IP> to any port 6443 proto tcp
+   ufw allow from 10.42.0.0/16 && ufw allow from 10.43.0.0/16   # k3s pod / service CIDRs
+   ufw enable
+   ```
+   Keep the SSH session open while enabling, and test from a second one.
+2. **SSH**: key-only login (`PasswordAuthentication no`), and consider a non-root user.
+3. **Argo CD**: change the initial admin password and delete `argocd-initial-admin-secret` (see [bootstrap.md](bootstrap.md#first-login)).
+4. **Secrets in Git**: add Sealed Secrets or SOPS so app secrets can be managed by GitOps too.
+5. **Backups**: automate the datastore and PV backups to off-site storage.
+
+## Uninstall
+
+`/usr/local/bin/k3s-uninstall.sh` removes k3s and **all** cluster data on the node.

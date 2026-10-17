@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Collects everything needed to rebuild this k3s (+ Rancher/Helm) cluster.
+# Collects everything needed to rebuild this k3s (+ Helm / Argo CD) cluster.
 # Run as root on the k3s server node:  bash export-cluster.sh
 # Output: /root/k3s-export.tar.gz
 # Secrets are exported WITHOUT values unless you run: INCLUDE_SECRETS=1 bash export-cluster.sh
@@ -54,7 +54,7 @@ $K get nodes -o json > "$OUT/cluster/nodes.json" 2>&1
 $K get crd -o custom-columns=NAME:.metadata.name,HELM:.metadata.labels.app\\.kubernetes\\.io/managed-by --no-headers > "$OUT/cluster/crd-list.txt" 2>&1
 $K api-resources --verbs=list -o wide > "$OUT/cluster/api-resources.txt" 2>&1
 
-SKIP='^(events|events\.events\.k8s\.io|nodes|componentstatuses|.*\.metrics\.k8s\.io|leases\..*|endpoints|endpointslices\..*|pods|replicasets\.apps|controllerrevisions\.apps|jobs\.batch|tokenreviews.*|selfsubjectaccessreviews.*|.*reviews\..*|certificatesigningrequests\..*|.*\.cattle\.io|.*\.fleet\.cattle\.io|.*\.cluster\.x-k8s\.io|apiservices\..*|customresourcedefinitions\..*)$'
+SKIP='^(events|events\.events\.k8s\.io|nodes|componentstatuses|.*\.metrics\.k8s\.io|leases\..*|endpoints|endpointslices\..*|pods|replicasets\.apps|controllerrevisions\.apps|jobs\.batch|tokenreviews.*|selfsubjectaccessreviews.*|.*reviews\..*|certificatesigningrequests\..*|.*\.cattle\.io|apiservices\..*|customresourcedefinitions\..*)$'
 
 for r in $($K api-resources --verbs=list --namespaced=false -o name); do
   echo "$r" | grep -Eq "$SKIP" && continue
@@ -76,10 +76,10 @@ for r in $($K api-resources --verbs=list --namespaced=true -o name); do
   fi
   $K get "$r" -A -o json > "$OUT/namespaced/$r.json" 2>/dev/null
 done
-# Rancher CRs are skipped above (Rancher recreates them); keep a list for reference
+# k3s *.cattle.io objects (HelmChart, Addon, ...) are skipped above (k3s recreates them); keep a list
 $K api-resources --verbs=list -o name | grep -E 'cattle\.io' | while read -r r; do
   echo "== $r"; $K get "$r" -A --no-headers 2>/dev/null | head -50
-done > "$OUT/cluster/rancher-objects-list.txt"
+done > "$OUT/cluster/cattle-objects-list.txt"
 
 # drop empty lists
 find "$OUT" -name '*.json' -size -200c -exec grep -l '"items": \[\]' {} + 2>/dev/null | xargs -r rm -f
