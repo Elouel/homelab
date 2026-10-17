@@ -9,13 +9,15 @@ All commands run as root on the server unless noted. `export KUBECONFIG=/etc/ran
 flowchart TD
   Q{"What do you want to change?"}
   Q -->|"An app or platform component"| A["edit apps/ or platform/, git push - Argo CD deploys"]
+  Q -->|"A secret value"| S["write it in Vault - see secrets.md"]
   Q -->|"Server IP, domain, hostname, repo URL"| B["edit .env on PC and server, run ./bootstrap.sh"]
-  Q -->|"k3s / Helm / cert-manager / Argo CD version"| C["edit versions.env, git push, git pull on server, run ./bootstrap.sh"]
+  Q -->|"k3s / Helm / cert-manager / Argo CD version"| C["edit versions.env, copy files to the server, run ./bootstrap.sh"]
   Q -->|"k3s flags"| D["edit k3s/config.yaml, run ./bootstrap.sh, systemctl restart k3s"]
-  Q -->|"Argo CD / cert-manager chart values or ApplicationSets"| E["edit helm/*/values.yaml or argocd/, git push, git pull on server, run ./bootstrap.sh"]
+  Q -->|"Argo CD / cert-manager chart values or the ApplicationSet"| E["edit helm/*/values.yaml or argocd/, copy files to the server, run ./bootstrap.sh"]
 ```
 
-Updating the server copy of the repo: `cd /root/homelab && git pull`.
+The repo is not cloned on the server. "Copy files to the server" means the scp block in
+[bootstrap.md](bootstrap.md#copying-the-files-to-the-server).
 
 ## Upgrades
 
@@ -26,6 +28,8 @@ Updating the server copy of the repo: `cd /root/homelab && git pull`.
 | cert-manager | bump `CERT_MANAGER_VERSION`, re-run | Read the upgrade notes for each minor. CRDs are upgraded by the chart (`crds.enabled`) |
 | Argo CD | bump `ARGO_CD_CHART_VERSION`, re-run | Read the Argo CD upgrade notes for each minor (`docs/operator-manual/upgrading/` in the Argo CD repo) and the chart's changelog for renamed values. CRDs are upgraded by the chart (`crds.install`). Apps keep running during the upgrade |
 | Helm CLI | bump `HELM_VERSION`, re-run | — |
+| Vault | bump the dependency `version` in `platform/vault/Chart.yaml`, and `vault.server.image.tag` **and** the `unsealer` sidecar image in its `values.yaml` to the same tag (`tools/check.sh` compares the rendered images), push | Read the chart changelog and Vault upgrade notes. Take a [snapshot](secrets.md#backup-and-restore) first. Argo CD replaces `vault-0` (`updateStrategyType: RollingUpdate`) and the sidecar unseals it; short Vault outage |
+| External Secrets | bump the dependency `version` in `platform/external-secrets/Chart.yaml` **and** the three image tags (controller, `webhook`, `certController`) in its `values.yaml` to `v<version>` (`tools/check.sh` compares the rendered images), push | Read the release notes for CRD / API version changes (`external-secrets.io/v1` is used) |
 | Apps | change the image tag or chart version in `apps/<name>`, push | — |
 
 Before any platform upgrade, take a [backup](#backups).
@@ -42,6 +46,8 @@ What Git does **not** contain:
 | Server token + certs | `/var/lib/rancher/k3s/server/token`, `.../tls/` | Same tarball |
 | App data (PVs) | `/var/lib/rancher/k3s/storage/` | `tar`/`restic` it, ideally with the app scaled to 0 |
 | Hand-made Secrets | in the DB | Covered by the DB backup. Also keep the values in your password manager |
+| Vault data | PV of `vault-0` (Raft) | `vault operator raft snapshot save`, see [secrets.md](secrets.md#backup-and-restore) |
+| Vault unseal key + root token | your password manager (key also in Secret `vault/vault-unseal-keys`) | Needed to restore a snapshot or recreate the Secret |
 
 Cold datastore backup (about 1 minute of API downtime; running pods keep running):
 
@@ -62,9 +68,13 @@ everything it deploys comes from Git. Only the admin password would have to be s
 
 **A. Rebuild from Git (keeps nothing that isn't in Git or `.env`; new Argo CD admin password):**
 
-1. New Ubuntu 24.04 server. Update `SERVER_IP` in `.env` if the IP changed.
-2. `git clone`, `scp .env`, `./bootstrap.sh`.
-3. Recreate hand-made Secrets, then restore PV data into `/var/lib/rancher/k3s/storage/` before the apps start (or scale them down while restoring).
+1. New Ubuntu 24.04 server. Update `SERVER_IP` in `.env` if the IP changed. Or wipe an existing server without
+   reinstalling the OS: `/usr/local/bin/k3s-uninstall.sh` removes k3s and **everything** in the cluster.
+2. Copy the files and run `./bootstrap.sh` ([bootstrap.md](bootstrap.md#copying-the-files-to-the-server)).
+3. Vault comes up new and empty. Run `./tools/vault-init.sh` once, restore the latest Vault snapshot, then replace the key in
+   `vault-unseal-keys` with the **old** Vault's key (all in [secrets.md](secrets.md#backup-and-restore)).
+4. Recreate hand-made Secrets, then restore app PV data into `/var/lib/rancher/k3s/storage/` before the apps start
+   (or scale them down while restoring). Skip the old Vault volume (`*_vault_data-vault-0`): Vault is restored from its snapshot in step 3.
 
 **B. Restore the datastore (keeps everything). Test this before you rely on it:**
 
@@ -105,7 +115,9 @@ Then update `docs/current-cluster.md` with anything that changed.
 | Argo CD UI down | `kubectl -n argocd get pods`, `kubectl -n argocd logs deploy/argocd-server` |
 | Argo CD login fails / forgot password | reset it: `kubectl -n argocd patch secret argocd-secret -p '{"data":{"admin.password":null,"admin.passwordMtime":null}}'`, then `kubectl -n argocd rollout restart deploy/argocd-server` (a new `argocd-initial-admin-secret` is generated) |
 | App not deployed | `kubectl -n argocd get applications`, see [gitops.md](gitops.md#checking-status) |
-| No Applications for `apps/` at all | the cluster Secret is missing or unlabelled: `kubectl -n argocd get secret in-cluster --show-labels`, re-run `./bootstrap.sh` |
+| App `Sync failed` after a rebuild, `Skipping auto-sync: failed previous sync attempt` | it synced before a platform component it needs (e.g. External Secrets CRDs) was ready and used up its retries. **Sync** it in the UI once the platform Applications are healthy (see [gitops.md](gitops.md#how-a-folder-becomes-an-application)) |
+| No Applications for `apps/` or `platform/` at all | the cluster Secret is missing or unlabelled: `kubectl -n argocd get secret in-cluster --show-labels`, re-run `./bootstrap.sh` |
+| Vault not ready, ExternalSecrets not syncing | Vault is sealed: `kubectl -n vault logs vault-0 -c unsealer`, see [secrets.md](secrets.md#restarts-auto-unseal) |
 | Certificate missing | see [tls-and-ingress.md](tls-and-ingress.md#debugging-a-certificate) |
 | 404 from Traefik | Ingress host doesn't match the URL, or `ingressClassName` isn't `traefik`: `kubectl get ingress -A` |
 
@@ -113,7 +125,9 @@ Then update `docs/current-cluster.md` with anything that changed.
 
 Known gaps on the current server, in priority order:
 
-1. **Firewall**: `bootstrap.sh` does not enable `ufw`, so 6443 (Kubernetes API) is open to the world. Suggested:
+1. **Host firewall**: the provider firewall in front of the VPS restricts inbound traffic by source IP
+   (see [architecture.md](architecture.md#network-ports-on-the-host)). `bootstrap.sh` does not enable `ufw`; as a
+   second layer in case the provider rules change, suggested:
    ```bash
    ufw default deny incoming && ufw default allow outgoing
    ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp
@@ -124,8 +138,10 @@ Known gaps on the current server, in priority order:
    Keep the SSH session open while enabling, and test from a second one.
 2. **SSH**: key-only login (`PasswordAuthentication no`), and consider a non-root user.
 3. **Argo CD**: change the initial admin password and delete `argocd-initial-admin-secret` (see [bootstrap.md](bootstrap.md#first-login)).
-4. **Secrets in Git**: add Sealed Secrets or SOPS so app secrets can be managed by GitOps too.
-5. **Backups**: automate the datastore and PV backups to off-site storage.
+4. **Vault**: the UI/API at `vault.<BASE_DOMAIN>` is reachable from every IP the provider firewall allows. Revoke the
+   root token after setup ([secrets.md](secrets.md#first-time-setup)). Optionally move the unseal key off the node with a
+   cloud KMS seal.
+5. **Backups**: automate the datastore, PV and Vault snapshot backups to off-site storage.
 
 ## Uninstall
 

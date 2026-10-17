@@ -1,0 +1,95 @@
+# domain / serverIP come from the cluster (passed in by the homelab ApplicationSet). Placeholder only.
+domain: example.com
+# host: vault.example.com   # optional override; defaults to vault.<domain>
+
+# Values for the official hashicorp/vault chart (dependency in Chart.yaml).
+vault:
+  # Fixed object names (StatefulSet/pod vault-0, Services vault and vault-active) whatever the release name is.
+  # templates/ingress.yaml, platform/external-secrets (vaultStore.server) and tools/vault-*.sh rely on them.
+  fullnameOverride: vault
+  global:
+    tlsDisable: true          # TLS is terminated at Traefik; inside the cluster Vault speaks plain HTTP
+  injector:
+    enabled: false            # apps get secrets through External Secrets, not the agent sidecar
+  ui:
+    enabled: true
+  server:
+    image:
+      repository: hashicorp/vault
+      tag: "2.0.4"   # keep equal to the unsealer sidecar image below (tools/check.sh compares them)
+    # The chart defaults to OnDelete (pods are replaced only by hand). With the unsealer sidecar a restart needs
+    # no manual unseal, so let a pushed image or unsealer change roll vault-0 (short outage while it restarts).
+    updateStrategyType: RollingUpdate
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 512Mi }
+    # Auto-unseal: this sidecar unseals Vault on every pod start (reboot, upgrade, reschedule)
+    # with the keys in Secret vault-unseal-keys (created by tools/vault-init.sh, never in Git).
+    # The volume is optional, so the pod also starts before that Secret exists.
+    extraContainers:
+      - name: unsealer
+        image: hashicorp/vault:2.0.4   # keep equal to server.image.tag (tools/check.sh compares them)
+        env:
+          - name: VAULT_ADDR
+            value: http://127.0.0.1:8200
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # PID 1 ignores SIGTERM unless trapped; sleep in the background so the trap runs at once on pod stop
+            trap 'exit 0' TERM
+            echo "unsealer: watching $VAULT_ADDR"
+            while :; do
+              vault status >/dev/null 2>&1; rc=$?
+              # exit code 2 = sealed; only try once the server is initialised
+              if [ "$rc" = 2 ] && vault status 2>/dev/null | grep -q '^Initialized *true'; then
+                found=0
+                for f in /vault/unseal/key*; do
+                  [ -f "$f" ] || continue
+                  found=1
+                  # key=@file: the CLI reads the key from the file, so it never appears on a command line (ps)
+                  vault write sys/unseal key=@"$f" >/dev/null 2>&1 || echo "unsealer: key $(basename "$f") rejected"
+                  vault status >/dev/null 2>&1 && { echo "unsealer: Vault unsealed"; break; }
+                done
+                [ "$found" = 1 ] || echo "unsealer: Vault is sealed but Secret vault-unseal-keys has no keys"
+              fi
+              sleep 10 & wait $!
+            done
+        volumeMounts:
+          - name: unseal-keys
+            mountPath: /vault/unseal
+            readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+        resources:
+          requests: { cpu: 5m, memory: 16Mi }
+          limits: { memory: 64Mi }
+    volumes:
+      - name: unseal-keys
+        secret:
+          secretName: vault-unseal-keys
+          optional: true
+          defaultMode: 0440        # readable by the Vault user via fsGroup
+    # The Ingress is in templates/ingress.yaml (the chart can't build the host from .Values.domain)
+    ingress:
+      enabled: false
+    # ServiceAccount vault may call the TokenReview API -> needed by the Kubernetes auth method
+    authDelegator:
+      enabled: true
+    dataStorage:
+      enabled: true
+      size: 2Gi               # local-path PV under /var/lib/rancher/k3s/storage
+    auditStorage:
+      enabled: false
+    standalone:
+      enabled: false
+    # Integrated storage (Raft) with one replica: built-in snapshots for backups, and room to grow
+    ha:
+      enabled: true
+      replicas: 1
+      disruptionBudget:
+        enabled: false        # one node: a PDB with maxUnavailable 0 would block node drains
+      # The chart's default raft config is used: UI on, plain-HTTP listener on 8200/8201, Raft data in /vault/data,
+      # Kubernetes service registration. Re-read server.ha.raft.config in the chart's values.yaml on chart upgrades.
+      raft:
+        enabled: true
+        setNodeId: true

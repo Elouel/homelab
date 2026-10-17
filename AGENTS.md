@@ -5,8 +5,8 @@ Read this file completely before changing anything.
 
 ## What this repo is
 
-Infrastructure-as-code for a single-node k3s cluster with cert-manager and Argo CD. Two Argo CD
-ApplicationSets (`argocd/`) deploy every folder under `platform/` and `apps/` from this **public** GitHub repo. Start with
+Infrastructure-as-code for a single-node k3s cluster with cert-manager and Argo CD. One Argo CD
+ApplicationSet (`argocd/homelab.yaml`) deploys every folder under `platform/` and `apps/` from this **public** GitHub repo. Start with
 [README.md](README.md) and [docs/architecture.md](docs/architecture.md).
 
 ## Hard rules (never break these)
@@ -15,12 +15,12 @@ ApplicationSets (`argocd/`) deploy every folder under `platform/` and `apps/` fr
    no passwords, tokens, keys, kubeconfigs or Secret values. Private values belong in `.env` (git-ignored).
    In docs and examples write `<SERVER_IP>`, `<BASE_DOMAIN>`, `<server>`. If an example needs an IP,
    use the documentation range `192.0.2.0/24`.
-2. **Never commit `kind: Secret` with data.** Document which secrets must be created by hand instead
-   (see [docs/adding-an-app.md](docs/adding-an-app.md#secrets)).
+2. **Never commit `kind: Secret` with data.** Secret values live in Vault; charts get them through an
+   `ExternalSecret` (see [docs/secrets.md](docs/secrets.md)). Document which Vault paths/keys must exist.
 3. **Never read, print or copy the contents of `.env` or `.secrets/`** into files, commits, logs or chat.
    Use them only through `bootstrap.sh` / `tools/check.sh`.
-4. **Cluster-specific values reach apps only via the cluster Secret `argocd/in-cluster`** (annotations
-   `homelab/domain`, `homelab/server-ip`, written by `bootstrap.sh`, passed in by the `apps` ApplicationSet).
+4. **Cluster-specific values reach charts only via the cluster Secret `argocd/in-cluster`** (annotations
+   `homelab/domain`, `homelab/server-ip`, written by `bootstrap.sh`, passed in by the `homelab` ApplicationSet).
    Templates use `{{ .Values.domain }}` / `{{ .Values.serverIP }}`. Never hard-code them.
 5. **Pin every version**: component and chart versions in `versions.env`, chart dependency versions in
    `Chart.yaml`, image tags in values (no `latest`).
@@ -40,11 +40,14 @@ ApplicationSets (`argocd/`) deploy every folder under `platform/` and `apps/` fr
    - Argo CD / cert-manager values → `helm/*/values.yaml` (needs `./bootstrap.sh`)
    - how folders become Argo CD Applications → `argocd/*.yaml` (needs `./bootstrap.sh`)
    - new private setting → `.env.example` + `bootstrap.sh` (+ cluster Secret annotation and
-     `argocd/apps.yaml` `valuesObject` if apps need it)
+     a `valuesObject` line in `argocd/homelab.yaml` if charts need it)
+   - Vault configuration (auth methods, policies, roles) → `tools/vault-configure.sh` (user runs it on the server;
+     first setup is `tools/vault-init.sh`)
 2. Follow the existing patterns. New apps copy `apps/whoami` (a Helm chart; folder name = namespace = release).
+   `platform/` folders are Helm charts too; upstream charts are wrapped as a dependency (see `platform/vault`).
 3. **Update the docs in the same change** (see the matrix below). A change without matching docs is incomplete.
 4. Run `sh tools/check.sh` and fix every `FAIL`.
-5. Tell the user which steps they still have to run on the server, if any (e.g. `git pull && ./bootstrap.sh`).
+5. Tell the user which steps they still have to run on the server, if any (e.g. copy the files and run `./bootstrap.sh`, see `docs/bootstrap.md`). The repo is not cloned on the server.
 
 ## Documentation update matrix
 
@@ -54,12 +57,13 @@ ApplicationSets (`argocd/`) deploy every folder under `platform/` and `apps/` fr
 | app hostname, namespace, required secrets or storage | that app's row and section in `docs/apps.md` |
 | `bootstrap.sh` (any step) | `docs/bootstrap.md` (sequence diagram + step table). Also `docs/configuration.md` if inputs changed |
 | `.env.example` (new/renamed/removed variable) | `docs/configuration.md` `.env` table. Also `docs/bootstrap.md` if bootstrap uses it |
-| cluster values (annotations on `argocd/in-cluster`, `valuesObject` in `argocd/apps.yaml`) | `docs/configuration.md` (cluster values section) and `docs/adding-an-app.md` |
+| cluster values (annotations on `argocd/in-cluster`, `valuesObject` in `argocd/homelab.yaml`) | `docs/configuration.md` (cluster values section) and `docs/adding-an-app.md` |
 | `versions.env` | `README.md` "What gets installed" table. Also `docs/operations.md` if the upgrade needs special steps |
 | `k3s/config.yaml` | `docs/configuration.md` k3s table. Also `docs/architecture.md` if ports or state paths change |
 | `helm/*/values.yaml` | `docs/configuration.md` Helm values table |
 | `argocd/*.yaml` or Argo CD conventions | `docs/gitops.md` |
 | ClusterIssuers, Traefik, ingress or TLS behaviour | `docs/tls-and-ingress.md`, `docs/apps.md` platform table |
+| `platform/vault`, `platform/external-secrets`, `tools/vault-*.sh`, Vault paths/policies, unseal | `docs/secrets.md` |
 | `.gitleaks.toml`, `.githooks/`, CI workflow | `docs/secret-scanning.md` rules table |
 | `tools/*.sh` | the doc that describes the tool (`docs/operations.md`, `docs/secret-scanning.md`) and the layout in `README.md` |
 | new top-level folder or file | `README.md` repository layout |
@@ -87,7 +91,11 @@ sh tools/check.sh
 
 It checks shell syntax, YAML, Helm rendering (if `helm` is installed), that no `.env` value leaks
 into committable files, gitleaks (if installed), Markdown links, that every `apps/`/`platform/` folder is
-listed in `docs/apps.md` (and every `apps/` folder is a Helm chart), and that Mermaid blocks are well-formed. All checks must pass before you commit.
+listed in `docs/apps.md` (and is a Helm chart), that Mermaid blocks are well-formed,
+that the rendered Vault server and unsealer images have the same tag, and that the External Secrets image tags match its chart
+version. All checks must pass before you commit. Wrapper chart dependencies are downloaded
+only when missing. If the download fails, the render check shows `skip` when the chart repository is unreachable
+(offline) and `FAIL` when it is reachable (wrong name or version in `Chart.yaml`).
 
 ## Environment notes for agents
 

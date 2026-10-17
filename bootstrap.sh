@@ -45,9 +45,9 @@ helm upgrade --install argocd argo/argo-cd \
   --set global.domain="${ARGOCD_HOSTNAME}" \
   --wait --timeout 10m
 
-step "cluster values (Secret argocd/in-cluster) - read by the apps ApplicationSet"
+step "cluster values (Secret argocd/in-cluster) - read by the homelab ApplicationSet"
 # Registers the local cluster with Argo CD explicitly, so the cluster generator can select it by
-# label and pass its annotations (domain, serverIP) to every app as Helm values.
+# label and pass its annotations (domain, serverIP) to every platform component and app as Helm values.
 kubectl -n argocd create secret generic in-cluster \
   --from-literal=name=in-cluster \
   --from-literal=server=https://kubernetes.default.svc \
@@ -60,7 +60,11 @@ kubectl -n argocd create secret generic in-cluster \
 | kubectl apply -f -
 
 if [ -n "${GIT_REPO_URL:-}" ] && [[ "${GIT_REPO_URL}" != *"<user>"* ]]; then
-  step "GitOps: ApplicationSets -> ${GIT_REPO_URL} (${GIT_BRANCH})"
+  step "GitOps: ApplicationSet homelab -> ${GIT_REPO_URL} (${GIT_BRANCH})"
+  # ApplicationSets apps and platform of the earlier two-file layout: remove them without their Applications
+  # (--cascade=orphan), so the homelab ApplicationSet adopts those by name. A normal delete would cascade to the
+  # Applications and, through the apps' finalizer, to everything the apps deploy.
+  kubectl -n argocd delete applicationset apps platform --cascade=orphan --ignore-not-found
   for f in argocd/*.yaml; do
     sed -e "s|\${GIT_REPO_URL}|${GIT_REPO_URL}|g" -e "s|\${GIT_BRANCH}|${GIT_BRANCH}|g" "$f"
     echo "---"
@@ -73,7 +77,7 @@ if [ -n "${GIT_REPO_URL:-}" ] && [[ "${GIT_REPO_URL}" != *"<user>"* ]]; then
     echo "ClusterIssuer not ready yet - check the platform-cluster-issuer app in Argo CD"
   fi
 else
-  echo "GIT_REPO_URL not set in .env - skipping ApplicationSets"
+  echo "GIT_REPO_URL not set in .env - skipping the ApplicationSet"
 fi
 
 echo -e "\nDone. Open https://${ARGOCD_HOSTNAME}  (user: admin)"

@@ -1,6 +1,6 @@
 # Adding an app
 
-Every app is a folder under `apps/` that Argo CD deploys as a Helm chart. The `apps` ApplicationSet
+Every app is a folder under `apps/` that Argo CD deploys as a Helm chart. The `homelab` ApplicationSet
 picks up new folders by itself: there is nothing to register.
 `apps/whoami` is the reference example. Copy it and change the details.
 
@@ -16,7 +16,7 @@ apps/whoami/             # folder name = Application name = namespace = Helm rel
 
 ```mermaid
 flowchart LR
-  F["folder apps/whoami"] -->|"ApplicationSet apps"| REL["Application whoami - ns whoami"]
+  F["folder apps/whoami"] -->|"ApplicationSet homelab"| REL["Application whoami - ns whoami"]
   VY["values.yaml - image, domain: example.com"] --> REL
   CS["Secret argocd/in-cluster - homelab/domain"] -->|"valuesObject overrides domain"| REL
   T["templates/*.yaml"] --> REL
@@ -96,7 +96,7 @@ spec:
                 port: { number: 80 }
 ```
 
-Argo CD's repo server runs `helm dependency build` for you when `charts/` is missing. Don't commit the generated `charts/` folder; committing `Chart.lock` is fine and pins the exact dependency.
+Argo CD's repo server runs `helm dependency build` for you when `charts/` is missing. Don't commit the generated `charts/` folder or `Chart.lock` (both git-ignored): the exact `version` in `Chart.yaml` is the pin.
 
 ## Storage
 
@@ -107,15 +107,11 @@ Argo CD's repo server runs `helm dependency build` for you when `charts/` is mis
 ## Secrets
 
 The repo is public. **Never commit a `kind: Secret` with data.** gitleaks blocks it (rule `k8s-secret-data`).
-Until Sealed Secrets or SOPS is added, create secrets by hand on the server:
+Put the values in Vault under `kv/apps/myapp/...` (`myapp` = the app's namespace; other namespaces can't read it) and add an `ExternalSecret` to the chart. The External Secrets
+Operator then creates the Kubernetes Secret (e.g. `myapp-secrets`), and the chart references it as usual
+(`envFrom.secretRef.name: myapp-secrets`). Full recipe: [secrets.md](secrets.md#giving-an-app-a-secret).
 
-```bash
-kubectl create namespace myapp --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n myapp create secret generic myapp-secrets --from-literal=API_KEY='...'
-```
-
-and reference them from the chart (`envFrom.secretRef.name: myapp-secrets`). Write down in the
-app's `values.yaml` (as a comment) which secrets must exist.
+Write down in the app's `values.yaml` (as a comment) which Vault paths and keys must exist.
 
 ## Checklist before pushing
 
@@ -123,6 +119,6 @@ app's `values.yaml` (as a comment) which secrets must exist.
 - [ ] Image tag pinned (no `latest`)
 - [ ] `resources.requests` (and a memory limit) set. The node has 8 GB
 - [ ] Hostname built from `.Values.domain`, no IPs or real domains in the files
-- [ ] No secret values in any file
+- [ ] No secret values in any file (they go to Vault, see [secrets.md](secrets.md))
 - [ ] `sh tools/check.sh` passes
 - [ ] Docs updated (see `AGENTS.md`), e.g. list the app in `docs/apps.md`

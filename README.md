@@ -11,9 +11,9 @@ flowchart LR
   GH --> BS
   BS --> K3S["k3s + Traefik"]
   BS --> CM["cert-manager"]
-  BS --> AR["Argo CD + ApplicationSets"]
+  BS --> AR["Argo CD + ApplicationSet"]
   GH -->|"poll about every 3 min"| AR
-  AR --> P["platform/ - ClusterIssuers"]
+  AR --> P["platform/ - ClusterIssuers, Vault, External Secrets"]
   AR --> A["apps/ - your apps"]
   U["Internet"] -->|"80 / 443"| K3S
 ```
@@ -25,10 +25,8 @@ flowchart LR
 sh tools/setup-git-hooks.sh          # secret scanning before every commit (needs gitleaks)
 cp .env.example .env                 # fill in SERVER_IP (or leave empty), repo URL
 
-# on a fresh Ubuntu 24.04 server
-git clone https://github.com/<user>/<repo>.git /root/homelab
-scp .env root@<server>:/root/homelab/            # from your PC
-ssh root@<server> "cd /root/homelab && ./bootstrap.sh"
+# then copy the bootstrap files to a fresh Ubuntu 24.04 server and run bootstrap.sh:
+# see docs/bootstrap.md "Copying the files to the server" (no git clone on the server)
 ```
 
 Then open `https://argocd.<BASE_DOMAIN>` and log in as `admin` (bootstrap prints how to get the
@@ -42,10 +40,12 @@ initial password). To deploy apps, add a folder under `apps/` and `git push`.
 | Helm | v3.22.1 | `bootstrap.sh` |
 | cert-manager | v1.21.2 | `bootstrap.sh` (Helm) |
 | Argo CD | v3.5.5 (chart `argo/argo-cd` 10.10.5) | `bootstrap.sh` (Helm) |
-| ApplicationSets `platform`, `apps` | — | `bootstrap.sh` (from `argocd/`) |
+| ApplicationSet `homelab` | — | `bootstrap.sh` (from `argocd/homelab.yaml`) |
+| Vault | v2.0.4 (chart `hashicorp/vault` 0.34.1) | Argo CD, `platform/vault` |
+| External Secrets Operator | v2.13.0 (chart `external-secrets` 2.13.0) | Argo CD, `platform/external-secrets` |
 | `platform/*`, `apps/*` | — | Argo CD, from Git |
 
-Versions are pinned in [`versions.env`](versions.env).
+Versions are pinned in [`versions.env`](versions.env), and for platform components in their `Chart.yaml` / `values.yaml`.
 
 ## Documentation
 
@@ -57,6 +57,7 @@ Versions are pinned in [`versions.env`](versions.env).
 | [docs/gitops.md](docs/gitops.md) | understand the Argo CD setup, check deploy status, force or pause deploys |
 | [docs/adding-an-app.md](docs/adding-an-app.md) | deploy something new |
 | [docs/apps.md](docs/apps.md) | see what's deployed |
+| [docs/secrets.md](docs/secrets.md) | set up Vault (auto-unseal), give an app or a build a secret |
 | [docs/tls-and-ingress.md](docs/tls-and-ingress.md) | debug certificates or hostnames |
 | [docs/secret-scanning.md](docs/secret-scanning.md) | understand the gitleaks hook and what's not allowed in this public repo |
 | [docs/operations.md](docs/operations.md) | upgrade, back up, restore, change IP, troubleshoot, harden |
@@ -72,13 +73,17 @@ versions.env              pinned versions
 k3s/config.yaml           -> /etc/rancher/k3s/config.yaml
 helm/cert-manager/        cert-manager values
 helm/argo-cd/             Argo CD values (UI hostname comes from .env)
-argocd/                   ApplicationSets: one Argo CD Application per platform/ and apps/ folder
-platform/                 cluster-wide config deployed by Argo CD
+argocd/                   ApplicationSet homelab: one Argo CD Application per platform/ and apps/ folder
+platform/                 shared components deployed by Argo CD (ClusterIssuers, Vault, External Secrets)
 apps/                     one Helm chart per app, deployed by Argo CD
 tools/check.sh            repo self-check (run before every commit)
 tools/export-cluster.sh   snapshot a live cluster
+tools/vault-init.sh       one-time Vault init + auto-unseal key Secret - run on the server
+tools/vault-configure.sh  configure Vault (KV, Kubernetes auth, External Secrets role) - run on the server
+tools/vault-lib.sh        helpers shared by the two Vault scripts (sourced)
 tools/setup-git-hooks.sh  enable the gitleaks pre-commit hook
 .githooks/ .gitleaks.toml .github/workflows/   secret scanning
+.gitattributes            LF line endings on every OS (files are copied to the server as they are)
 docs/                     documentation
 .secrets/                 git-ignored: keys, exports
 ```

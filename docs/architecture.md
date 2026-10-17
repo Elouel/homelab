@@ -9,11 +9,11 @@ and **Argo CD**, and Argo CD deploys everything under `platform/` and `apps/` fr
 flowchart TB
   subgraph L3["Layer 3 - Your apps (Argo CD, from Git)"]
     APPS["apps/* - one Helm chart per folder"]
-    PLAT["platform/* - ClusterIssuers"]
+    PLAT["platform/* - ClusterIssuers, Vault, External Secrets"]
   end
   subgraph L2["Layer 2 - Installed by bootstrap.sh with Helm"]
     CM["cert-manager"]
-    ARGO["Argo CD + ApplicationSets platform, apps"]
+    ARGO["Argo CD + ApplicationSet homelab"]
   end
   subgraph L1["Layer 1 - Bundled with k3s"]
     TRAEFIK["Traefik ingress + ServiceLB"]
@@ -41,7 +41,7 @@ flowchart TB
 | 1 Traefik, CoreDNS, local-path, metrics-server | k3s auto-deploys from `/var/lib/rancher/k3s/server/manifests` | k3s defaults (not overridden) |
 | 2 cert-manager | `bootstrap.sh` (`helm upgrade --install`) | `versions.env`, `helm/cert-manager/values.yaml` |
 | 2 Argo CD | `bootstrap.sh` (`helm upgrade --install`) | `versions.env`, `helm/argo-cd/values.yaml`, `.env` (hostname) |
-| 2 ApplicationSets + cluster values | `bootstrap.sh` (`kubectl apply`) | `argocd/*.yaml`, `.env` |
+| 2 ApplicationSet + cluster values | `bootstrap.sh` (`kubectl apply`) | `argocd/*.yaml`, `.env` |
 | 3 platform + apps | Argo CD, from Git | `platform/`, `apps/` |
 
 Argo CD does not manage itself or cert-manager: both are converged by `bootstrap.sh`, so a broken
@@ -56,6 +56,7 @@ flowchart LR
   LB --> T["Traefik - kube-system"]
   T -->|"Host argocd.BASE_DOMAIN"| A["Service argocd-server - ns argocd"]
   T -->|"Host whoami.BASE_DOMAIN"| W["Service whoami - ns whoami"]
+  T -->|"Host vault.BASE_DOMAIN"| V["Service vault - ns vault"]
   T -->|"/.well-known/acme-challenge"| S["cert-manager solver pod"]
   A --> AP["argocd-server pod - plain HTTP"]
   W --> WP["whoami pod"]
@@ -83,7 +84,10 @@ flowchart LR
 | 8472 | UDP | flannel VXLAN | only when adding nodes |
 
 Argo CD pulls from GitHub, so no inbound port is needed for GitOps.
-`ufw` is not configured by `bootstrap.sh` — see [operations.md](operations.md#hardening-todo).
+Inbound traffic is filtered by source IP in the VPS provider's firewall, in front of the server. It is configured at
+the provider, not in this repo. Every HTTPS endpoint (Argo CD, Vault, apps) is reachable only from the IPs it allows.
+Let's Encrypt validates HTTP-01 from changing IPs, so port 80 must stay reachable for certificate renewal.
+`ufw` on the host is not configured by `bootstrap.sh` — see [operations.md](operations.md#hardening-todo).
 
 ## Namespaces
 
@@ -91,7 +95,10 @@ Argo CD pulls from GitHub, so no inbound port is needed for GitOps.
 |---|---|
 | `kube-system` | k3s components, Traefik |
 | `cert-manager` | cert-manager controller, webhook, cainjector |
-| `argocd` | Argo CD (server, application controller, repo server, ApplicationSet controller, redis), ApplicationSets, Applications, **cluster Secret `in-cluster`** with the cluster values |
+| `argocd` | Argo CD (server, application controller, repo server, ApplicationSet controller, redis), ApplicationSet `homelab`, Applications, **cluster Secret `in-cluster`** with the cluster values |
+| `vault` | Vault server `vault-0` (containers `vault` + `unsealer`), its PV, Secret `vault-unseal-keys` (`platform/vault`) |
+| `external-secrets` | External Secrets Operator (`platform/external-secrets`); `ClusterSecretStore vault` is cluster-scoped |
+| `cluster-issuer` | empty (the ClusterIssuers are cluster-scoped; the namespace comes from `CreateNamespace`) |
 | `whoami`, … | one namespace per app (= folder name under `apps/`) |
 
 ## Where state lives
@@ -103,4 +110,7 @@ Argo CD pulls from GitHub, so no inbound port is needed for GitOps.
 | Cluster join token | `/var/lib/rancher/k3s/server/token` | no |
 | Argo CD admin password, settings | Secrets / ConfigMaps in `argocd` | settings yes (`helm/argo-cd/values.yaml`), password no |
 | PersistentVolume data | `/var/lib/rancher/k3s/storage/` (local-path) | no |
+| Vault secrets | Raft DB on the PV of `vault-0` | **no — snapshot it**, see [secrets.md](secrets.md#backup-and-restore) |
+| Vault unseal key | Secret `vault/vault-unseal-keys` (k3s DB) + your password manager | **no — without it Vault data is unreadable** |
+| Vault root token | your password manager | no |
 | Site-specific settings | `.env` on your PC / server (git-ignored) | no — keep a private copy |

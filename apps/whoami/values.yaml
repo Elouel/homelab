@@ -1,5 +1,5 @@
 image: traefik/whoami:v1.11.0
 # domain / serverIP come from the cluster (annotations on Secret argocd/in-cluster, written by
-# bootstrap.sh from .env, passed in by the apps ApplicationSet). These are placeholders only.
+# bootstrap.sh from .env, passed in by the homelab ApplicationSet). These are placeholders only.
 domain: example.com
 # host: whoami.example.com   # optional override; defaults to whoami.<domain>

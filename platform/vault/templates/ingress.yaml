@@ -1,0 +1,25 @@
+{{- $host := .Values.host | default (printf "vault.%s" .Values.domain) }}
+# Vault UI + API at https://vault.<domain>. Service <fullnameOverride> (not -active) also reaches a sealed or
+# uninitialised pod (publishNotReadyAddresses), so the UI can show its status and unseal it by hand.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: vault-tls
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.vault.fullnameOverride }}
+                port:
+                  number: 8200

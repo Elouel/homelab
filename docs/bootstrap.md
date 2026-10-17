@@ -7,14 +7,33 @@ existing one (every step is "install if missing, otherwise converge to the pinne
 
 - Ubuntu 24.04, root shell, outbound internet access
 - Ports 80 and 443 reachable from the internet (Let's Encrypt HTTP-01)
-- This repo checked out on the server, plus a filled-in `.env` copied next to `bootstrap.sh`
-  (it is git-ignored, so `git clone` does not bring it — `scp` it)
+- The bootstrap files copied to `/root/homelab` on the server (see below). The repo is **not** cloned on the server:
+  Argo CD reads `platform/` and `apps/` straight from GitHub, so the server only needs what `bootstrap.sh` and the
+  Vault scripts use.
 
-```bash
-git clone https://github.com/<user>/<repo>.git /root/homelab
-# from your PC:  scp .env root@<server>:/root/homelab/
-cd /root/homelab && ./bootstrap.sh
+## Copying the files to the server
+
+From your PC (PowerShell, in the repo folder). Push first, because Argo CD deploys what is on GitHub:
+
+```powershell
+git push
+$line = Select-String '^SERVER_IP=' .env | Select-Object -First 1
+$ip = if ($line) { (($line.Line -split '=',2)[1] -replace '\s+#.*$','').Trim().Trim('"',"'") } else { '' }
+if (-not $ip) { $ip = Read-Host 'Server IP' }   # SERVER_IP is empty in .env (auto-detect)
+# first time only: ssh root@$ip "mkdir -p /root/homelab"
+scp -r bootstrap.sh versions.env .env k3s helm argocd tools "root@${ip}:/root/homelab/"
+ssh -t root@$ip "cd /root/homelab && chmod +x bootstrap.sh tools/*.sh && sed -i 's/\r$//' .env && ./bootstrap.sh"
 ```
+
+SSH asks for the root password once per command (two prompts).
+
+| Copied | Used by |
+|---|---|
+| `bootstrap.sh`, `versions.env`, `.env` | `bootstrap.sh` |
+| `k3s/`, `helm/`, `argocd/` | `bootstrap.sh` (k3s config, Helm values, ApplicationSet) |
+| `tools/` | Vault setup: `vault-init.sh`, `vault-configure.sh` and their shared `vault-lib.sh` ([secrets.md](secrets.md)). The other scripts in it are copied along but not needed |
+
+Re-run the same block whenever one of these files changes.
 
 ## Flow
 
@@ -40,6 +59,7 @@ sequenceDiagram
   B->>HR: upgrade --install argocd (global.domain = ARGOCD_HOSTNAME, wait)
   B->>K: apply Secret argocd/in-cluster (labels + annotations domain, server-ip)
   alt GIT_REPO_URL set in .env
+    B->>K: delete ApplicationSets apps, platform if present (cascade orphan)
     B->>K: apply argocd/*.yaml with URL and branch substituted
     A-->>K: creates Applications, deploys platform/ and apps/
     B->>K: wait for ClusterIssuer letsencrypt-prod, then Certificate argocd-server-tls
@@ -58,8 +78,8 @@ sequenceDiagram
 | 5 | Helm | Installs Helm `HELM_VERSION`; adds repos `jetstack` and `argo`. | skipped when version matches; repo add uses `--force-update` |
 | 6 | cert-manager | Release `cert-manager` in ns `cert-manager`, values `helm/cert-manager/values.yaml` (`crds.enabled: true`). `--wait` so its webhook is ready before anything requests certificates. | `helm upgrade --install` (no-op revision if nothing changed) |
 | 7 | Argo CD | Release `argocd` in ns `argocd`, chart `argo/argo-cd` `ARGO_CD_CHART_VERSION`, values `helm/argo-cd/values.yaml` plus `global.domain` (the UI hostname) from `.env`. `--wait`. | `helm upgrade --install` |
-| 8 | Cluster values | Secret `argocd/in-cluster`: registers the local cluster with Argo CD, labelled `homelab/cluster-values=true`, annotated with `homelab/domain` and `homelab/server-ip`. The `apps` ApplicationSet passes them to every app. See [configuration.md](configuration.md#cluster-values). | `kubectl apply` |
-| 9 | GitOps seed | Only if `GIT_REPO_URL` is set and is not the `<user>` placeholder: `sed` fills `${GIT_REPO_URL}` and `${GIT_BRANCH}` in `argocd/*.yaml` and applies them. Argo CD then deploys `platform/` (ClusterIssuers) and `apps/`. | `kubectl apply` |
+| 8 | Cluster values | Secret `argocd/in-cluster`: registers the local cluster with Argo CD, labelled `homelab/cluster-values=true`, annotated with `homelab/domain` and `homelab/server-ip`. The `homelab` ApplicationSet passes them to every chart. See [configuration.md](configuration.md#cluster-values). | `kubectl apply` |
+| 9 | GitOps seed | Only if `GIT_REPO_URL` is set and is not the `<user>` placeholder. First deletes the ApplicationSets `apps` and `platform` of the earlier two-file layout, if they exist, with `--cascade=orphan`: their Applications and everything those deployed keep running, and the `homelab` ApplicationSet adopts the Applications by name. Then `sed` fills `${GIT_REPO_URL}` and `${GIT_BRANCH}` in `argocd/*.yaml` and applies them. Argo CD then deploys `platform/` (ClusterIssuers, Vault, External Secrets) and `apps/`. Vault then needs a one-time `tools/vault-init.sh` ([secrets.md](secrets.md#first-time-setup)). | `kubectl delete --ignore-not-found`, `kubectl apply` |
 | 10 | TLS check | Waits up to 5 min for `ClusterIssuer letsencrypt-prod` and then for the Argo CD UI certificate. Prints a hint instead of failing if they are slow. | read-only |
 
 ## Typical runtimes

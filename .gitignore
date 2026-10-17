@@ -4,3 +4,11 @@
 *.pem
 *.key
 *kubeconfig*
+# Helm dependencies and lock files written by 'helm dependency build' (Argo CD fetches them itself;
+# the exact version in Chart.yaml is the pin)
+/platform/*/charts/
+/apps/*/charts/
+/platform/*/Chart.lock
+/apps/*/Chart.lock
+# Vault raft snapshots (contain encrypted secrets)
+*.snap

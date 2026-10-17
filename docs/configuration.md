@@ -18,7 +18,7 @@ flowchart LR
   subgraph CL["Cluster"]
     CS["Secret argocd/in-cluster - annotations"]
     AR["Argo CD Helm release"]
-    ASC["ApplicationSets platform, apps"]
+    ASC["ApplicationSet homelab"]
     REL["Applications - one per folder"]
   end
   V --> BS["bootstrap.sh"]
@@ -79,10 +79,10 @@ Copied to `/etc/rancher/k3s/config.yaml`. Same keys as `k3s server --help` flags
 | `helm/cert-manager/values.yaml` | `cert-manager/cert-manager` | `crds.enabled: true` — the chart installs/upgrades its CRDs |
 | `helm/argo-cd/values.yaml` | `argocd/argocd` | `server.insecure` (TLS ends at Traefik), Ingress with class `traefik` and `cert-manager.io/cluster-issuer: letsencrypt-prod`, dex and notifications disabled, resource requests/limits for every component. `global.domain` comes from `.env` with `--set`. |
 
-## ApplicationSets (public templates)
+## ApplicationSet (public template)
 
-`argocd/platform.yaml` and `argocd/apps.yaml` contain `${GIT_REPO_URL}` / `${GIT_BRANCH}`
-placeholders that `bootstrap.sh` fills in. How they map folders to Applications is described in
+`argocd/homelab.yaml` contains `${GIT_REPO_URL}` / `${GIT_BRANCH}`
+placeholders that `bootstrap.sh` fills in. How it maps folders to Applications is described in
 [gitops.md](gitops.md#how-a-folder-becomes-an-application).
 
 ## Cluster values
@@ -98,14 +98,15 @@ metadata:
   namespace: argocd
   labels:
     argocd.argoproj.io/secret-type: cluster    # Argo CD: this is a cluster definition
-    homelab/cluster-values: "true"             # selected by the apps ApplicationSet
+    homelab/cluster-values: "true"             # selected by the homelab ApplicationSet
   annotations:
     homelab/domain: <BASE_DOMAIN>
     homelab/server-ip: <SERVER_IP>
 # data: name=in-cluster, server=https://kubernetes.default.svc, config={"tlsClientConfig":{"insecure":false}}
 ```
 
-The `apps` ApplicationSet uses a cluster generator on that label and hands the annotations to every app:
+The `homelab` ApplicationSet uses a cluster generator on that label and hand the annotations to
+every chart (platform component or app):
 
 ```yaml
 helm:
@@ -127,5 +128,5 @@ automatically, and Argo CD re-syncs them.
 
 1. Add the variable to `.env.example` and `.env`.
 2. Add an annotation for it in the "cluster values" step of `bootstrap.sh`.
-3. Add a matching line under `valuesObject` in `argocd/apps.yaml`.
+3. Add a matching line under `valuesObject` in `argocd/homelab.yaml`.
 4. Re-run `bootstrap.sh`, then document the value here and in [adding-an-app.md](adding-an-app.md).

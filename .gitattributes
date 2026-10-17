@@ -1,0 +1,3 @@
+# LF in the working tree on every OS (also with core.autocrlf=true on Windows): bootstrap.sh, tools/,
+# versions.env, k3s/, helm/ and argocd/ are copied to the Linux server as they are (docs/bootstrap.md).
+* text=auto eol=lf

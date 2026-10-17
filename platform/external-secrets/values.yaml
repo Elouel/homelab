@@ -1,0 +1,39 @@
+# domain / serverIP are passed in by the homelab ApplicationSet but not used here.
+
+# ClusterSecretStore "vault" (templates/cluster-secret-store.yaml). Matches tools/vault-configure.sh.
+vaultStore:
+  server: http://vault-active.vault.svc:8200   # Service <vault.fullnameOverride>-active in namespace vault (folder name)
+  kvPath: kv                  # KV v2 mount
+  authMountPath: kubernetes   # Vault Kubernetes auth mount
+  role: external-secrets      # Vault role bound to ServiceAccount <serviceAccount> in every namespace
+  audience: vault             # token audience, must match the role's audience
+  # ServiceAccount the store logs in with, in the namespace of each ExternalSecret. "default" exists everywhere,
+  # so apps need nothing extra. Must match bound_service_account_names in tools/vault-configure.sh.
+  serviceAccount: default
+
+# Values for the official external-secrets chart (dependency in Chart.yaml).
+# Image tags: keep all three equal to v<version in Chart.yaml> (the chart's appVersion; tools/check.sh compares the rendered images).
+external-secrets:   # gitleaks:allow (chart key, not a secret)
+  fullnameOverride: external-secrets   # fixed object names, e.g. deploy/external-secrets
+  # The chart installs the CRDs. Some are larger than the client-side apply annotation limit,
+  # so Argo CD applies these (and only these) server-side.
+  crds:
+    annotations:
+      argocd.argoproj.io/sync-options: ServerSideApply=true
+  image:
+    tag: v2.13.0
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  webhook:
+    image:
+      tag: v2.13.0
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+  certController:
+    image:
+      tag: v2.13.0
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }

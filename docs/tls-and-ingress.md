@@ -8,6 +8,7 @@ Every certificate comes from the ClusterIssuers in `platform/cluster-issuer`, re
 | Who | Issuer | Ingress / namespace | Certificate / Secret |
 |---|---|---|---|
 | Argo CD UI | `letsencrypt-prod` (annotation set in `helm/argo-cd/values.yaml`) | `argocd-server`, `argocd` | `argocd-server-tls` |
+| Vault UI / API | `letsencrypt-prod` | `vault`, `vault` (`platform/vault/templates/ingress.yaml`) | `vault-tls` |
 | Your apps | `letsencrypt-prod` / `letsencrypt-staging` | the app's Ingress | one `<app>-tls` per Ingress |
 
 All use ACME **HTTP-01** challenges solved through Traefik, so port 80 must be reachable from the internet.
@@ -86,5 +87,5 @@ spec:
             scheme: https
 ```
 
-It could live in `platform/traefik/` (a plain manifest folder; Argo CD picks it up). Check the values against the bundled Traefik chart version first.
+It could live in `platform/traefik/` (a small Helm chart like the other platform folders, with the manifest in `templates/`; Argo CD picks it up). Check the values against the bundled Traefik chart version first.
 A global redirect can interfere with HTTP-01 challenges. Test it with staging.

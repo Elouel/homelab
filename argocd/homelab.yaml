@@ -1,16 +1,26 @@
-# One Argo CD Application per folder under apps/ (each folder is a Helm chart).
+# One Argo CD Application per folder under platform/ and apps/ (each folder is a Helm chart).
 # Applied by bootstrap.sh with ${GIT_REPO_URL} / ${GIT_BRANCH} filled from .env.
-# Matrix: (clusters labelled homelab/cluster-values=true) x (folders under apps/).
+# Matrix: (clusters labelled homelab/cluster-values=true) x (folders under platform/ and apps/).
 # The cluster Secret argocd/in-cluster (written by bootstrap.sh) carries the private
 # cluster values as annotations; they are passed to every chart as .Values.domain / .Values.serverIP.
+#
+# Deletion differs by folder (see docs/gitops.md#deleting-applications):
+#   apps/*      the Application has the resources-finalizer (templatePatch below): when the ApplicationSet
+#               deletes it (folder removed, cluster Secret gone), its resources are deleted too.
+#   platform/*  no finalizer: Vault, the ClusterIssuers and the External Secrets CRDs keep running.
+#               A cascading delete from the Argo CD UI or 'argocd app delete' still removes them.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: apps
+  name: homelab
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    # Without this the controller gives every Application whose template has no finalizers the
+    # resources-finalizer, platform ones included. apps/* get it from templatePatch instead.
+    preserveResourcesOnDeletion: true
   generators:
     - matrix:
         generators:
@@ -22,12 +32,11 @@ spec:
               repoURL: ${GIT_REPO_URL}
               revision: ${GIT_BRANCH}
               directories:
+                - path: platform/*
                 - path: apps/*
   template:
     metadata:
-      name: '{{.path.basename}}'
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io   # removing the folder deletes its resources
+      name: '{{if hasPrefix "platform/" .path.path}}platform-{{end}}{{.path.basename}}'
     spec:
       project: default
       source:
@@ -48,6 +57,16 @@ spec:
           selfHeal: true
         syncOptions:
           - CreateNamespace=true
+        # 10 attempts (10 s doubling to 3 min, about 20 min in all): on a new cluster an app with an
+        # ExternalSecret can sync before platform-external-secrets has installed its CRDs and webhook.
         retry:
-          limit: 5
+          limit: 10
           backoff: { duration: 10s, factor: 2, maxDuration: 3m }
+  templatePatch: |
+    {{- if hasPrefix "apps/" .path.path }}
+    metadata:
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    {{- else }}
+    metadata: {}
+    {{- end }}

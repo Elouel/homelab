@@ -1,0 +1,9 @@
+apiVersion: v2
+name: vault
+version: 0.1.0
+description: HashiCorp Vault (single node, Raft storage) - the secret store for apps and CI
+dependencies:
+  # Official chart. Bump version here; the Vault image tag is pinned in values.yaml.
+  - name: vault
+    version: 0.34.1
+    repository: https://helm.releases.hashicorp.com
