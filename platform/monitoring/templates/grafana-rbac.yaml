@@ -1,0 +1,12 @@
+# Grafana's sidecars load dashboards and data sources from labelled ConfigMaps in every namespace.
+# The chart's own ClusterRole would also grant read on every Secret in the cluster (Vault's unseal key included),
+# so Grafana uses this one instead (values.yaml: grafana.rbac.useExistingClusterRole) and the sidecars watch
+# ConfigMaps only (sidecar.*.resource: configmap).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ index .Values "kube-prometheus-stack" "grafana" "rbac" "useExistingClusterRole" }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch]

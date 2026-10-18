@@ -13,7 +13,7 @@ flowchart LR
   BS --> CM["cert-manager"]
   BS --> AR["Argo CD + ApplicationSet"]
   GH -->|"poll about every 3 min"| AR
-  AR --> P["platform/ - ClusterIssuers, Vault, External Secrets"]
+  AR --> P["platform/ - ClusterIssuers, Vault, External Secrets, monitoring, logging"]
   AR --> A["apps/ - your apps"]
   U["Internet"] -->|"80 / 443"| K3S
 ```
@@ -43,6 +43,8 @@ initial password). To deploy apps, add a folder under `apps/` and `git push`.
 | ApplicationSet `homelab` | — | `bootstrap.sh` (from `argocd/homelab.yaml`) |
 | Vault | v2.0.4 (chart `hashicorp/vault` 0.34.1) | Argo CD, `platform/vault` |
 | External Secrets Operator | v2.13.0 (chart `external-secrets` 2.13.0) | Argo CD, `platform/external-secrets` |
+| Prometheus, Alertmanager, Grafana | chart `kube-prometheus-stack` 92.10.1 (Prometheus Operator v0.94.1) + `prometheus-operator-crds` 32.0.1 | Argo CD, `platform/monitoring` |
+| Loki, Grafana Alloy | Loki 3.7.8 (chart `grafana-community/loki` 18.17.1), Alloy v1.20.1 (chart `grafana/alloy` 1.13.1) | Argo CD, `platform/logging` |
 | `platform/*`, `apps/*` | — | Argo CD, from Git |
 
 Versions are pinned in [`versions.env`](versions.env), and for platform components in their `Chart.yaml` / `values.yaml`.
@@ -58,6 +60,7 @@ Versions are pinned in [`versions.env`](versions.env), and for platform componen
 | [docs/adding-an-app.md](docs/adding-an-app.md) | deploy something new |
 | [docs/apps.md](docs/apps.md) | see what's deployed |
 | [docs/secrets.md](docs/secrets.md) | set up Vault (auto-unseal), give an app or a build a secret |
+| [docs/monitoring.md](docs/monitoring.md) | set up Grafana and Telegram alerts, read metrics and logs, monitor your own app |
 | [docs/tls-and-ingress.md](docs/tls-and-ingress.md) | debug certificates or hostnames |
 | [docs/secret-scanning.md](docs/secret-scanning.md) | understand the gitleaks hook and what's not allowed in this public repo |
 | [docs/operations.md](docs/operations.md) | upgrade, back up, restore, change IP, troubleshoot, harden |
@@ -74,7 +77,7 @@ k3s/config.yaml           -> /etc/rancher/k3s/config.yaml
 helm/cert-manager/        cert-manager values
 helm/argo-cd/             Argo CD values (UI hostname comes from .env)
 argocd/                   ApplicationSet homelab: one Argo CD Application per platform/ and apps/ folder
-platform/                 shared components deployed by Argo CD (ClusterIssuers, Vault, External Secrets)
+platform/                 shared components deployed by Argo CD (ClusterIssuers, Vault, External Secrets, monitoring, logging)
 apps/                     one Helm chart per app, deployed by Argo CD
 tools/check.sh            repo self-check (run before every commit)
 tools/export-cluster.sh   snapshot a live cluster

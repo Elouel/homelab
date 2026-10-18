@@ -64,6 +64,7 @@ ApplicationSet (`argocd/homelab.yaml`) deploys every folder under `platform/` an
 | `argocd/*.yaml` or Argo CD conventions | `docs/gitops.md` |
 | ClusterIssuers, Traefik, ingress or TLS behaviour | `docs/tls-and-ingress.md`, `docs/apps.md` platform table |
 | `platform/vault`, `platform/external-secrets`, `tools/vault-*.sh`, Vault paths/policies, unseal | `docs/secrets.md` |
+| `platform/monitoring`, `platform/logging`, alert rules, scrape targets, dashboards, alert routing | `docs/monitoring.md` |
 | `.gitleaks.toml`, `.githooks/`, CI workflow | `docs/secret-scanning.md` rules table |
 | `tools/*.sh` | the doc that describes the tool (`docs/operations.md`, `docs/secret-scanning.md`) and the layout in `README.md` |
 | new top-level folder or file | `README.md` repository layout |
