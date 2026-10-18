@@ -11,7 +11,7 @@ flowchart LR
   ESO -->|"ClusterSecretStore vault - logs in as SA default of ns myapp"| V
   ESO -->|"creates and refreshes"| S["Secret myapp-secrets - ns myapp"]
   S --> P["myapp pod - envFrom / volume"]
-  CI["Build job - planned: Forgejo Actions"] -->|"OIDC token - JWT auth"| V
+  CI["Forgejo Actions job - planned"] -->|"OIDC token - JWT auth"| V
 ```
 
 | Part | Where | What it does |
@@ -160,8 +160,9 @@ changing a value (no reloader is installed).
 
 ## Builds (Forgejo Actions)
 
-**Planned, not configured yet.** It gets set up together with Forgejo and its runners. The idea: a job asks Forgejo
-for a short-lived OIDC token and logs in to Vault with it. Vault only lets that repo (and branch) read
+**Planned, not configured yet.** Forgejo and its runner run in `apps/forgejo` (see [forgejo.md](forgejo.md)); until
+this is set up, workflows use Forgejo's own Actions secrets. Forgejo itself gets its admin account and runner secret
+from `kv/apps/forgejo/*` like any app. The idea: a job asks Forgejo for a short-lived OIDC token and logs in to Vault with it. Vault only lets that repo (and branch) read
 `kv/ci/<repo>/*`. No long-lived secret is stored in Forgejo.
 
 ```mermaid
@@ -177,7 +178,7 @@ sequenceDiagram
   J->>V: read kv/ci/myrepo/registry
 ```
 
-Vault side (to be added to `tools/vault-configure.sh` once Forgejo runs at `https://git.<BASE_DOMAIN>`):
+Vault side (to be added to `tools/vault-configure.sh`; Forgejo runs at `https://git.<BASE_DOMAIN>`):
 
 ```bash
 vault auth enable -path=forgejo jwt
@@ -219,8 +220,9 @@ To verify when setting this up:
   `repo:<repository>:ref:<ref>`), but check that your Forgejo release has it.
 - Since Forgejo 16, `<repository>` in the token can be `owner-ID/repo-ID` instead of `owner/repo`.
   Decode a real token once and use exactly its `sub` in `bound_subject`.
-- Jobs can reach Vault through the public URL. If runner containers can resolve cluster DNS,
-  `http://vault-active.vault.svc.cluster.local:8200` also works.
+- Jobs can reach Vault through the public URL, or inside the cluster at `http://vault-active.vault.svc:8200`
+  (job containers share the runner pod's network and cluster DNS, see [forgejo.md](forgejo.md#how-the-runner-is-wired)).
+- Forgejo here runs 15.0.10, so the `owner-ID/repo-ID` form above does not apply until an upgrade to 16 or later.
 
 ## Security notes
 

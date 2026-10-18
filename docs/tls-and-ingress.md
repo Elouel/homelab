@@ -9,6 +9,7 @@ Every certificate comes from the ClusterIssuers in `platform/cluster-issuer`, re
 |---|---|---|---|
 | Argo CD UI | `letsencrypt-prod` (annotation set in `helm/argo-cd/values.yaml`) | `argocd-server`, `argocd` | `argocd-server-tls` |
 | Vault UI / API | `letsencrypt-prod` | `vault`, `vault` (`platform/vault/templates/ingress.yaml`) | `vault-tls` |
+| Forgejo | `letsencrypt-prod` | `forgejo`, `forgejo` (`apps/forgejo/templates/ingress.yaml`) | `forgejo-tls` |
 | Your apps | `letsencrypt-prod` / `letsencrypt-staging` | the app's Ingress | one `<app>-tls` per Ingress |
 
 All use ACME **HTTP-01** challenges solved through Traefik, so port 80 must be reachable from the internet.

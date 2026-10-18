@@ -57,6 +57,7 @@ flowchart LR
   T -->|"Host argocd.BASE_DOMAIN"| A["Service argocd-server - ns argocd"]
   T -->|"Host whoami.BASE_DOMAIN"| W["Service whoami - ns whoami"]
   T -->|"Host vault.BASE_DOMAIN"| V["Service vault - ns vault"]
+  T -->|"Host git.BASE_DOMAIN"| G["Service forgejo-http - ns forgejo"]
   T -->|"/.well-known/acme-challenge"| S["cert-manager solver pod"]
   A --> AP["argocd-server pod - plain HTTP"]
   W --> WP["whoami pod"]
@@ -99,6 +100,7 @@ Let's Encrypt validates HTTP-01 from changing IPs, so port 80 must stay reachabl
 | `vault` | Vault server `vault-0` (containers `vault` + `unsealer`), its PV, Secret `vault-unseal-keys` (`platform/vault`) |
 | `external-secrets` | External Secrets Operator (`platform/external-secrets`); `ClusterSecretStore vault` is cluster-scoped |
 | `cluster-issuer` | empty (the ClusterIssuers are cluster-scoped; the namespace comes from `CreateNamespace`) |
+| `forgejo` | Forgejo (`forgejo` pod: server + `register-runner` sidecar), its PV, Forgejo Runner (`forgejo-runner` pod: runner + privileged `dind`) (`apps/forgejo`) |
 | `whoami`, … | one namespace per app (= folder name under `apps/`) |
 
 ## Where state lives
@@ -113,4 +115,5 @@ Let's Encrypt validates HTTP-01 from changing IPs, so port 80 must stay reachabl
 | Vault secrets | Raft DB on the PV of `vault-0` | **no — snapshot it**, see [secrets.md](secrets.md#backup-and-restore) |
 | Vault unseal key | Secret `vault/vault-unseal-keys` (k3s DB) + your password manager | **no — without it Vault data is unreadable** |
 | Vault root token | your password manager | no |
+| Forgejo repositories, users, SQLite DB, Actions logs | PV `forgejo-data` (local-path) | **no — back it up**, see [forgejo.md](forgejo.md#backup-and-upgrade) |
 | Site-specific settings | `.env` on your PC / server (git-ignored) | no — keep a private copy |

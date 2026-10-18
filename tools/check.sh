@@ -34,7 +34,7 @@ repos_reachable(){
     case $u in http*) curl -fsS -o /dev/null -r 0-0 --max-time 15 "${u%/}/index.yaml" 2>/dev/null || return 1;; *) return 1;; esac
   done
 }
-# Each render is kept in $RENDER for checks 9 and 10. --skip-tests: the charts' test pods are never deployed by
+# Each render is kept in $RENDER for checks 9 to 11. --skip-tests: the charts' test pods are never deployed by
 # Argo CD, and the Vault chart's test pod would add a third hashicorp/vault image to check 9.
 RENDER=$(mktemp -d); trap 'rm -rf "$RENDER"' EXIT
 render_file(){ echo "$RENDER/$(echo "$1" | tr / _).yaml"; }
@@ -100,7 +100,7 @@ for f in $(echo "$FILES" | grep -E '\.md$'); do
 done
 [ $FAIL = 0 ] && ok "mermaid"
 
-# Checks 9 and 10 compare the images in the charts rendered by check 3, so other tags in values.yaml don't matter.
+# Checks 9 to 11 compare the images in the charts rendered by check 3, so other tags in values.yaml don't matter.
 # img_tags <chart> <repository>: the tag of every container image <any registry/>repository, one per line.
 # Returns 1 if check 3 has no render of the chart (no helm, dependencies missing, or a render error).
 img_tags(){ f=$(render_file "$1"); [ -s "$f" ] || return 1
@@ -126,6 +126,15 @@ if et=$(img_tags platform/external-secrets external-secrets/external-secrets); t
   [ -n "$ec" ] && [ "$(lines "$et")" -ge 3 ] && [ "$eu" = "v$ec" ] && ok "external-secrets $ec, images $eu" \
     || bad "platform/external-secrets/values.yaml: controller, webhook and certController image tags must all be v$ec (rendered: $(echo $eu))"
 else skip "platform/external-secrets was not rendered (see check 3)"; fi
+
+echo "11. Forgejo server image and register-runner sidecar image have the same tag"
+# The chart's server and init containers use forgejo.image.tag; the sidecar names its image itself. All rendered
+# forgejo/forgejo images must have one tag.
+if ft=$(img_tags apps/forgejo forgejo/forgejo); then
+  fu=$(printf '%s\n' "$ft" | sort -u)
+  [ "$(lines "$fu")" -eq 1 ] && ok "forgejo/forgejo $fu" \
+    || bad "apps/forgejo/values.yaml: forgejo.image.tag and the register-runner image must be the same Forgejo version (rendered: $(echo $fu))"
+else skip "apps/forgejo was not rendered (see check 3)"; fi
 
 echo
 [ $FAIL = 0 ] && echo "All checks passed." || { echo "Checks FAILED."; exit 1; }

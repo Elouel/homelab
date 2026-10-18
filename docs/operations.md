@@ -30,6 +30,7 @@ The repo is not cloned on the server. "Copy files to the server" means the scp b
 | Helm CLI | bump `HELM_VERSION`, re-run | — |
 | Vault | bump the dependency `version` in `platform/vault/Chart.yaml`, and `vault.server.image.tag` **and** the `unsealer` sidecar image in its `values.yaml` to the same tag (`tools/check.sh` compares the rendered images), push | Read the chart changelog and Vault upgrade notes. Take a [snapshot](secrets.md#backup-and-restore) first. Argo CD replaces `vault-0` (`updateStrategyType: RollingUpdate`) and the sidecar unseals it; short Vault outage |
 | External Secrets | bump the dependency `version` in `platform/external-secrets/Chart.yaml` **and** the three image tags (controller, `webhook`, `certController`) in its `values.yaml` to `v<version>` (`tools/check.sh` compares the rendered images), push | Read the release notes for CRD / API version changes (`external-secrets.io/v1` is used) |
+| Forgejo | bump the dependency `version` in `apps/forgejo/Chart.yaml`, and `forgejo.image.tag` **and** the `register-runner` image in its `values.yaml` to the same version (`tools/check.sh` compares the rendered images), push. Runner and `dind`: `runner.image` / `runner.dindImage` | Read the Forgejo release notes. Back up the PV first ([forgejo.md](forgejo.md#backup-and-upgrade)): the DB is migrated on start, no downgrade |
 | Apps | change the image tag or chart version in `apps/<name>`, push | — |
 
 Before any platform upgrade, take a [backup](#backups).
@@ -48,6 +49,7 @@ What Git does **not** contain:
 | Hand-made Secrets | in the DB | Covered by the DB backup. Also keep the values in your password manager |
 | Vault data | PV of `vault-0` (Raft) | `vault operator raft snapshot save`, see [secrets.md](secrets.md#backup-and-restore) |
 | Vault unseal key + root token | your password manager (key also in Secret `vault/vault-unseal-keys`) | Needed to restore a snapshot or recreate the Secret |
+| Forgejo data | PV `forgejo-data` | `tar` with Forgejo scaled to 0, see [forgejo.md](forgejo.md#backup-and-upgrade) |
 
 Cold datastore backup (about 1 minute of API downtime; running pods keep running):
 
@@ -142,6 +144,8 @@ Known gaps on the current server, in priority order:
    root token after setup ([secrets.md](secrets.md#first-time-setup)). Optionally move the unseal key off the node with a
    cloud KMS seal.
 5. **Backups**: automate the datastore, PV and Vault snapshot backups to off-site storage.
+6. **Forgejo Actions**: the runner's `dind` container is privileged, so whoever can run a workflow can take over the
+   node. Keep Forgejo registration closed and repository write access to trusted people ([forgejo.md](forgejo.md#security)).
 
 ## Uninstall
 
