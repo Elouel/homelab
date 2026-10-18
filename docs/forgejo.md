@@ -168,29 +168,36 @@ To add a label (another job image), add a `name:docker://image:tag` line to `run
 
 ### Rotating the runner secret
 
-Write a new value to `kv/apps/forgejo/runner` that keeps the **first 16 characters** and changes the last 24 (the
-first 16 identify the runner). Running the registration again with the same first 16 characters updates the secret
-of the existing runner ([Forgejo docs](https://forgejo.org/docs/latest/admin/actions/registration/#offline-registration)).
-Then, on the server (root), one step at a time:
+The new value keeps the **first 16 characters** (they identify the runner) and changes the last 24. Running the
+registration again with the same first 16 characters updates the secret of the existing runner
+([Forgejo docs](https://forgejo.org/docs/latest/admin/actions/registration/#offline-registration)).
+Run the steps in this order, one at a time, in one root shell on the server. Step 1 must run **before** Vault changes:
+it records the old state that steps 3 and 4 wait to see replaced.
 
 ```bash
-# 1. fingerprint of the current Secret and count of registrations so far (no secret is printed)
+# 1. before changing Vault: fingerprint of the current Secret and count of registrations so far (no secret is printed)
 before=$(kubectl -n forgejo get secret forgejo-runner-token -o jsonpath='{.data.token}' | sha256sum)
 n=$(kubectl -n forgejo logs deploy/forgejo -c register-runner | grep -c 'runner homelab registered')
-# 2. re-read Vault now, and wait until the Secret holds the new value
+# 2. write the new value to Vault, from a shell in the Vault pod (the commands after 'sh' run there)
+kubectl -n vault exec -it vault-0 -c vault -- sh
+vault login                                    # paste your token
+old=$(vault kv get -field=token kv/apps/forgejo/runner)
+{ printf '%s' "$old" | cut -c1-16 | tr -d '\n'; head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n'; } | vault kv put kv/apps/forgejo/runner token=-
+unset old; rm ~/.vault-token && exit           # back in the server shell; $before and $n are still set
+# 3. re-read Vault now, and wait until the Secret holds the new value
 kubectl -n forgejo annotate externalsecret forgejo-runner-token force-sync=$(date +%s) --overwrite
 until [ "$(kubectl -n forgejo get secret forgejo-runner-token -o jsonpath='{.data.token}' | sha256sum)" != "$before" ]; do sleep 5; done
-# 3. wait until register-runner has registered the new value (the kubelet updates the mounted file within ~2 minutes)
+# 4. wait until register-runner has registered the new value (the kubelet updates the mounted file within ~2 minutes)
 until [ "$(kubectl -n forgejo logs deploy/forgejo -c register-runner | grep -c 'runner homelab registered')" -gt "$n" ]; do sleep 10; done
-# 4. only now restart the runner, so it reads the new value, and wait until it has connected
+# 5. only now restart the runner, so it reads the new value, and wait until it has connected
 kubectl -n forgejo rollout restart deploy/forgejo-runner
 kubectl -n forgejo rollout status deploy/forgejo-runner
 until kubectl -n forgejo logs deploy/forgejo-runner -c runner | grep -q 'declared successfully'; do sleep 5; done
 ```
 
-Steps 2 and 3 wait without a time limit. If one takes more than 5 minutes, press Ctrl-C:
-`kubectl -n forgejo get externalsecret forgejo-runner-token` shows why the sync fails (step 2), and
-`kubectl -n forgejo logs deploy/forgejo -c register-runner` why the registration fails (step 3).
+Steps 3 and 4 wait without a time limit. If one takes more than 5 minutes, press Ctrl-C:
+`kubectl -n forgejo get externalsecret forgejo-runner-token` shows why the sync fails (step 3), and
+`kubectl -n forgejo logs deploy/forgejo -c register-runner` why the registration fails (step 4).
 **Recovering from an interrupted rotation:** whatever the order so far, both sides read the current Secret on start.
 Restart `deploy/forgejo`, wait for `runner homelab registered` in its `register-runner` log, then restart
 `deploy/forgejo-runner`. Finally, **Site administration → Actions → Runners** must show `homelab` online once.
@@ -211,15 +218,21 @@ the Deployment back to 1 within seconds, so stop the Argo CD application control
 ([pausing GitOps](gitops.md#pausing-gitops)). On the server (root):
 
 ```bash
+f=/root/forgejo-$(date +%F).tgz
 kubectl -n argocd scale statefulset argocd-application-controller --replicas=0
-kubectl -n forgejo scale deploy/forgejo --replicas=0
-kubectl -n forgejo wait --for=delete pod -l app.kubernetes.io/name=forgejo --timeout=120s
-tar -czf /root/forgejo-$(date +%F).tgz -C /var/lib/rancher/k3s/storage "$(kubectl -n forgejo get pvc forgejo-data -o jsonpath='{.spec.volumeName}')_forgejo_forgejo-data"
+# tar runs only if Forgejo has stopped; a failed or partial archive is deleted
+kubectl -n forgejo scale deploy/forgejo --replicas=0 \
+  && kubectl -n forgejo wait --for=delete pod -l app.kubernetes.io/name=forgejo --timeout=120s \
+  && tar -czf "$f" -C /var/lib/rancher/k3s/storage "$(kubectl -n forgejo get pvc forgejo-data -o jsonpath='{.spec.volumeName}')_forgejo_forgejo-data" \
+  && echo "backup OK: $f" \
+  || { rm -f "$f"; echo "BACKUP FAILED: Forgejo did not stop or tar failed, no archive written"; }
+# always start Forgejo and Argo CD again
 kubectl -n forgejo scale deploy/forgejo --replicas=1
 kubectl -n argocd scale statefulset argocd-application-controller --replicas=1
 ```
 
-Run the last two lines even if `tar` fails: while the controller is stopped, Argo CD deploys nothing.
+The last two lines run whatever happened before them: while the controller is stopped, Argo CD deploys nothing.
+On `BACKUP FAILED`, check `kubectl -n forgejo get pods` and run the block again.
 
 Upgrades: bump the dependency `version` in `apps/forgejo/Chart.yaml`, `forgejo.image.tag` **and** the
 `register-runner` image in `apps/forgejo/values.yaml` (`tools/check.sh` compares them), push. Read the Forgejo
