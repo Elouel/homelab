@@ -209,7 +209,9 @@ data:
 
 - Grafana is on the internet at `https://grafana.<BASE_DOMAIN>` (TLS from Let's Encrypt). Like every endpoint here, only
   the IPs that the provider firewall allows can reach it ([architecture.md](architecture.md#network-ports-on-the-host)).
-  Use a strong admin password; Grafana can query every metric and log line.
+  Use a strong admin password; Grafana can query every metric and log line. `http://` requests are redirected to
+  `https://` (Traefik Middleware `monitoring/redirect-https` in `templates/ingress.yaml`), so the login never goes over
+  plain HTTP.
 - Grafana's sidecars may read **ConfigMaps** in all namespaces, not Secrets (`templates/grafana-rbac.yaml`; the upstream
   chart would grant read on every Secret). The Loki rules sidecar, which would get the same, is off.
 - Alloy may read pods, pod logs, namespaces, events and nodes only (the chart default also includes all Secrets).
@@ -241,7 +243,7 @@ Resources / Pod** for `prometheus-kps-0`, and raise the limit in `platform/monit
 | No logs in Explore | `kubectl -n logging logs daemonset/alloy -c alloy`, then `kubectl -n logging logs loki-0`. Alloy's UI (component health): `kubectl -n logging port-forward svc/alloy 12345` → `http://localhost:12345` |
 | Loki rejects lines with "timestamp too old" | expected for lines older than 7 days (`reject_old_samples_max_age`) |
 | `platform-monitoring` sync error about CRD size / annotations | the CRDs must be applied server-side: check the `crds.annotations` in `platform/monitoring/values.yaml` |
-| PV full | Prometheus deletes old data at 8 GB (`retentionSize`); Loki after 7 days. To keep more, raise the PVC size and the limits in the values (local-path can't grow a PV: delete the PVC and pod to recreate it empty) |
+| PV full | Check the node disk first (server: `df -h /var/lib/rancher/k3s/storage`): local-path PVs share that disk and their size is not enforced. Prometheus deletes old data at 8 GB (`retentionSize`), Loki after 7 days; lower those to free space. local-path can't grow a PV: a bigger PVC means deleting the PVC and pod, a **destructive reset** (the PV and its data are deleted with the PVC) |
 
 ## Not covered yet
 

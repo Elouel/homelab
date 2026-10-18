@@ -49,7 +49,8 @@ What Git does **not** contain:
 | App data (PVs) | `/var/lib/rancher/k3s/storage/` | `tar`/`restic` it, ideally with the app scaled to 0 |
 | Hand-made Secrets | in the DB | Covered by the DB backup. Also keep the values in your password manager |
 | Vault data | PV of `vault-0` (Raft) | `vault operator raft snapshot save`, see [secrets.md](secrets.md#backup-and-restore) |
-| Metrics and log history | PVs of Prometheus and Loki | Not backed up: only the last 10 / 7 days, and dashboards, rules and settings are in Git |
+| Metrics and log history | PVs of Prometheus and Loki | Not backed up: only the last 10 / 7 days. Dashboards, rules and settings provisioned from Git come back by themselves |
+| Grafana UI state (users, preferences, dashboards made in the UI), Alertmanager silences | PVs of Grafana and `alertmanager-kps-0` | Not in Git, lost with the PV. Covered by the app PV backup above; or export UI dashboards as JSON and add them to Git |
 | Vault unseal key + root token | your password manager (key also in Secret `vault/vault-unseal-keys`) | Needed to restore a snapshot or recreate the Secret |
 
 Cold datastore backup (about 1 minute of API downtime; running pods keep running):

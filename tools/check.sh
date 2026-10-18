@@ -143,7 +143,8 @@ else skip "platform/monitoring dependencies not downloaded (see check 3)"; fi
 echo "12. every rendered container image has a fixed tag (not latest)"
 # All images of the charts rendered by check 3, including the defaults of upstream charts.
 if ls "$RENDER"/*.yaml >/dev/null 2>&1; then
-  imgs=$(cat "$RENDER"/*.yaml | sed -n "s/^ *image: *[\"']\{0,1\}\([^\"' ]\{1,\}\)[\"']\{0,1\} *$/\1/p" | sort -u)
+  # Inline comments are stripped first so 'image: x # note' is checked too; '[ -]*' also matches '- image:'.
+  imgs=$(cat "$RENDER"/*.yaml | sed -e 's/[[:space:]]#.*$//' | sed -n "s/^[ -]*image: *[\"']\{0,1\}\([^\"' ]\{1,\}\)[\"']\{0,1\} *$/\1/p" | sort -u)
   # no tag = no ':' after the last '/' and no digest
   untagged=$(printf '%s\n' "$imgs" | grep -E ':latest(@|$)|^([^/@]*/)*[^/:@]+$')
   [ -z "$untagged" ] && ok "$(lines "$imgs") images" || bad "image without a fixed tag: $(echo $untagged)"

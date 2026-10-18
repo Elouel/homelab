@@ -156,6 +156,7 @@ kube-prometheus-stack:
         resource: configmap
       datasources:
         resource: configmap
+        searchNamespace: ALL         # upstream default is the release namespace only (dashboards already use ALL)
       resources:
         requests: { cpu: 5m, memory: 48Mi }
         limits: { memory: 128Mi }
