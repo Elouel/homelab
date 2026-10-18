@@ -64,6 +64,7 @@ ApplicationSet (`argocd/homelab.yaml`) deploys every folder under `platform/` an
 | `argocd/*.yaml` or Argo CD conventions | `docs/gitops.md` |
 | ClusterIssuers, Traefik, ingress or TLS behaviour | `docs/tls-and-ingress.md`, `docs/apps.md` platform table |
 | `platform/vault`, `platform/external-secrets`, `tools/vault-*.sh`, Vault paths/policies, unseal | `docs/secrets.md` |
+| `platform/monitoring`, `platform/logging`, alert rules, scrape targets, dashboards, alert routing | `docs/monitoring.md` |
 | `.gitleaks.toml`, `.githooks/`, CI workflow | `docs/secret-scanning.md` rules table |
 | `tools/*.sh` | the doc that describes the tool (`docs/operations.md`, `docs/secret-scanning.md`) and the layout in `README.md` |
 | new top-level folder or file | `README.md` repository layout |
@@ -92,8 +93,9 @@ sh tools/check.sh
 It checks shell syntax, YAML, Helm rendering (if `helm` is installed), that no `.env` value leaks
 into committable files, gitleaks (if installed), Markdown links, that every `apps/`/`platform/` folder is
 listed in `docs/apps.md` (and is a Helm chart), that Mermaid blocks are well-formed,
-that the rendered Vault server and unsealer images have the same tag, and that the External Secrets image tags match its chart
-version. All checks must pass before you commit. Wrapper chart dependencies are downloaded
+that the rendered Vault server and unsealer images have the same tag, that the External Secrets image tags match its chart
+version, that the Prometheus Operator CRDs chart and kube-prometheus-stack ship the same operator version, and that no
+rendered image is untagged or `latest`. All checks must pass before you commit. Wrapper chart dependencies are downloaded
 only when missing. If the download fails, the render check shows `skip` when the chart repository is unreachable
 (offline) and `FAIL` when it is reachable (wrong name or version in `Chart.yaml`).
 

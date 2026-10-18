@@ -1,0 +1,25 @@
+{{- $host := .Values.host | default (printf "grafana.%s" .Values.domain) }}
+# Grafana UI at https://grafana.<domain>. Prometheus and Alertmanager have no Ingress: use Grafana
+# (Explore, Alerting) or kubectl port-forward (docs/monitoring.md).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: grafana-tls
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ index .Values "kube-prometheus-stack" "grafana" "fullnameOverride" }}
+                port:
+                  number: 80

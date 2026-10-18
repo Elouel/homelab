@@ -1,0 +1,201 @@
+# domain / serverIP come from the cluster (passed in by the homelab ApplicationSet). Placeholder only.
+domain: example.com
+# host: grafana.example.com   # optional override; defaults to grafana.<domain>
+
+# Secrets copied from Vault by External Secrets (templates/externalsecrets.yaml). See docs/secrets.md.
+vaultSecrets:
+  grafana: apps/monitoring/grafana                         # keys admin-user, admin-password
+  telegram: apps/monitoring/alertmanager-telegram          # keys bot-token, chat-id
+
+# Values for prometheus-community/prometheus-operator-crds (dependency in Chart.yaml).
+# Some CRDs are larger than the client-side apply annotation limit, so Argo CD applies them server-side.
+prometheus-operator-crds:
+  crds:
+    annotations:
+      argocd.argoproj.io/sync-options: ServerSideApply=true
+
+# Values for prometheus-community/kube-prometheus-stack (dependency in Chart.yaml).
+# Image tags come from the pinned chart version.
+kube-prometheus-stack:
+  crds:
+    enabled: false                   # installed by prometheus-operator-crds above
+  # Short fixed names: Prometheus/Alertmanager "kps" (pods prometheus-kps-0, alertmanager-kps-0,
+  # Services kps-prometheus:9090, kps-alertmanager:9093). Changing either later renames the PVCs (data loss).
+  fullnameOverride: kps
+  cleanPrometheusOperatorObjectNames: true
+
+  # k3s runs the scheduler, controller-manager and kube-proxy inside the k3s process (metrics only on 127.0.0.1)
+  # and this cluster has no etcd (SQLite). Scraping them would only produce TargetDown alerts.
+  kubeControllerManager: { enabled: false }
+  kubeScheduler: { enabled: false }
+  kubeProxy: { enabled: false }
+  kubeEtcd: { enabled: false }
+  defaultRules:
+    rules:
+      etcd: false
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      windows: false
+
+  prometheusOperator:
+    # The validating webhook for PrometheusRules is not needed here; turning it off avoids the certificate
+    # patch Jobs (Helm hooks) and caBundle drift in Argo CD. A broken rule shows up in the operator logs instead.
+    admissionWebhooks:
+      enabled: false
+    tls:
+      enabled: false                 # the operator's TLS only serves the webhook above
+    resources:
+      requests: { cpu: 10m, memory: 48Mi }
+      limits: { memory: 192Mi }
+    prometheusConfigReloader:
+      resources:
+        requests: { cpu: 5m, memory: 16Mi }
+        limits: { memory: 64Mi }
+
+  prometheus:
+    prometheusSpec:
+      # Pick up ServiceMonitors, PodMonitors, rules, ... from every namespace, not only those of this release,
+      # so an app chart can ship its own ServiceMonitor.
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      probeSelectorNilUsesHelmValues: false
+      scrapeConfigSelectorNilUsesHelmValues: false
+      retention: 10d
+      retentionSize: 8GB             # whichever is hit first; keep below the volume size
+      resources:
+        requests: { cpu: 100m, memory: 512Mi }
+        limits: { memory: 1536Mi }
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 10Gi        # local-path PV under /var/lib/rancher/k3s/storage
+
+  alertmanager:
+    alertmanagerSpec:
+      # Secret alertmanager-telegram (ExternalSecret) is mounted at /etc/alertmanager/secrets/alertmanager-telegram/.
+      # The pod waits for it, so it starts once the Vault secret exists.
+      secrets: [alertmanager-telegram]   # gitleaks:allow (name of a Secret to mount, not a value)
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { memory: 128Mi }
+      storage:                       # silences and notification state survive restarts
+        volumeClaimTemplate:
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 1Gi
+    config:
+      global:
+        resolve_timeout: 5m
+      inhibit_rules:                 # chart defaults: a critical alert mutes the warning/info of the same alert
+        - source_matchers: ['severity = critical']
+          target_matchers: ['severity =~ warning|info']
+          equal: [namespace, alertname]
+        - source_matchers: ['severity = warning']
+          target_matchers: ['severity = info']
+          equal: [namespace, alertname]
+        - source_matchers: ['alertname = InfoInhibitor']
+          target_matchers: ['severity = info']
+          equal: [namespace]
+        - target_matchers: ['alertname = InfoInhibitor']
+      route:
+        receiver: telegram
+        group_by: [namespace, alertname]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 12h
+        routes:
+          # Watchdog always fires (proves the alert pipeline works) and InfoInhibitor is a helper: don't send them
+          - receiver: 'null'
+            matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
+          # info alerts (e.g. CPUThrottlingHigh) are visible in Grafana / Alertmanager only
+          - receiver: 'null'
+            matchers: ['severity = "info"']
+      receivers:
+        - name: 'null'
+        - name: telegram
+          telegram_configs:
+            - bot_token_file: /etc/alertmanager/secrets/alertmanager-telegram/bot-token
+              chat_id_file: /etc/alertmanager/secrets/alertmanager-telegram/chat-id
+              send_resolved: true
+      templates:
+        - /etc/alertmanager/config/*.tmpl
+
+  grafana:
+    fullnameOverride: grafana        # Service grafana; templates/ingress.yaml relies on it
+    defaultDashboardsTimezone: browser
+    admin:
+      existingSecret: grafana-admin  # ExternalSecret in templates/externalsecrets.yaml
+      userKey: admin-user
+      passwordKey: admin-password   # gitleaks:allow (key name in Secret grafana-admin, not a value)
+    # Dashboards and data sources are provisioned from Git; the database keeps users, preferences and
+    # dashboards made in the UI. One PV, so replace the pod instead of rolling (RWO volume).
+    persistence:
+      enabled: true
+      size: 1Gi
+    deploymentStrategy:
+      type: Recreate
+    resources:
+      requests: { cpu: 25m, memory: 128Mi }
+      limits: { memory: 384Mi }
+    initChownData:
+      resources:
+        requests: { cpu: 5m, memory: 16Mi }
+        limits: { memory: 32Mi }
+    rbac:
+      useExistingClusterRole: grafana-sidecar   # templates/grafana-rbac.yaml: ConfigMaps only, no Secrets
+    sidecar:                         # loads dashboards/data sources from labelled ConfigMaps in all namespaces
+      dashboards:
+        resource: configmap
+      datasources:
+        resource: configmap
+      resources:
+        requests: { cpu: 5m, memory: 48Mi }
+        limits: { memory: 128Mi }
+    downloadDashboards:
+      resources:
+        requests: { cpu: 5m, memory: 16Mi }
+        limits: { memory: 64Mi }
+    additionalDataSources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.logging.svc:3100   # platform/logging
+        jsonData:
+          maxLines: 1000
+    # Dashboards from grafana.com, downloaded by an init container at pod start (pinned by revision)
+    dashboardProviders:
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: grafana-com
+            folder: Platform
+            type: file
+            disableDeletion: true
+            options:
+              path: /var/lib/grafana/dashboards/grafana-com
+    dashboards:
+      grafana-com:
+        traefik:
+          gnetId: 17347              # Traefik Official Kubernetes Dashboard (Traefik v3)
+          revision: 9
+          datasource:                # replaces ${DS_PROMETHEUS} with the uid of the chart's Prometheus data source
+            - { name: DS_PROMETHEUS, value: prometheus }
+
+  kube-state-metrics:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
+  prometheus-node-exporter:
+    resources:
+      requests: { cpu: 10m, memory: 24Mi }
+      limits: { memory: 64Mi }

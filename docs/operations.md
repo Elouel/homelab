@@ -30,6 +30,8 @@ The repo is not cloned on the server. "Copy files to the server" means the scp b
 | Helm CLI | bump `HELM_VERSION`, re-run | — |
 | Vault | bump the dependency `version` in `platform/vault/Chart.yaml`, and `vault.server.image.tag` **and** the `unsealer` sidecar image in its `values.yaml` to the same tag (`tools/check.sh` compares the rendered images), push | Read the chart changelog and Vault upgrade notes. Take a [snapshot](secrets.md#backup-and-restore) first. Argo CD replaces `vault-0` (`updateStrategyType: RollingUpdate`) and the sidecar unseals it; short Vault outage |
 | External Secrets | bump the dependency `version` in `platform/external-secrets/Chart.yaml` **and** the three image tags (controller, `webhook`, `certController`) in its `values.yaml` to `v<version>` (`tools/check.sh` compares the rendered images), push | Read the release notes for CRD / API version changes (`external-secrets.io/v1` is used) |
+| Monitoring | bump `kube-prometheus-stack` **and** `prometheus-operator-crds` in `platform/monitoring/Chart.yaml` to versions with the same appVersion (Prometheus Operator; `tools/check.sh` compares them), push | Read the kube-prometheus-stack "Upgrading" notes in its README for each major. Image tags come from the chart. Don't change `fullnameOverride` (renames the PVCs) |
+| Logging | bump `loki` / `alloy` in `platform/logging/Chart.yaml`, push | Read the Loki chart's upgrade notes (values are renamed between majors) and the Loki release notes. Keep the `schemaConfig` entry; a new schema needs a new entry with a future `from` date |
 | Apps | change the image tag or chart version in `apps/<name>`, push | — |
 
 Before any platform upgrade, take a [backup](#backups).
@@ -47,6 +49,7 @@ What Git does **not** contain:
 | App data (PVs) | `/var/lib/rancher/k3s/storage/` | `tar`/`restic` it, ideally with the app scaled to 0 |
 | Hand-made Secrets | in the DB | Covered by the DB backup. Also keep the values in your password manager |
 | Vault data | PV of `vault-0` (Raft) | `vault operator raft snapshot save`, see [secrets.md](secrets.md#backup-and-restore) |
+| Metrics and log history | PVs of Prometheus and Loki | Not backed up: only the last 10 / 7 days, and dashboards, rules and settings are in Git |
 | Vault unseal key + root token | your password manager (key also in Secret `vault/vault-unseal-keys`) | Needed to restore a snapshot or recreate the Secret |
 
 Cold datastore backup (about 1 minute of API downtime; running pods keep running):

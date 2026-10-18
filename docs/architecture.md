@@ -9,7 +9,7 @@ and **Argo CD**, and Argo CD deploys everything under `platform/` and `apps/` fr
 flowchart TB
   subgraph L3["Layer 3 - Your apps (Argo CD, from Git)"]
     APPS["apps/* - one Helm chart per folder"]
-    PLAT["platform/* - ClusterIssuers, Vault, External Secrets"]
+    PLAT["platform/* - ClusterIssuers, Vault, External Secrets, monitoring, logging"]
   end
   subgraph L2["Layer 2 - Installed by bootstrap.sh with Helm"]
     CM["cert-manager"]
@@ -57,6 +57,7 @@ flowchart LR
   T -->|"Host argocd.BASE_DOMAIN"| A["Service argocd-server - ns argocd"]
   T -->|"Host whoami.BASE_DOMAIN"| W["Service whoami - ns whoami"]
   T -->|"Host vault.BASE_DOMAIN"| V["Service vault - ns vault"]
+  T -->|"Host grafana.BASE_DOMAIN"| G["Service grafana - ns monitoring"]
   T -->|"/.well-known/acme-challenge"| S["cert-manager solver pod"]
   A --> AP["argocd-server pod - plain HTTP"]
   W --> WP["whoami pod"]
@@ -80,6 +81,7 @@ flowchart LR
 | 80 | TCP | Traefik HTTP + Let's Encrypt HTTP-01 challenges | **yes** |
 | 443 | TCP | Traefik HTTPS (Argo CD UI, apps) | **yes** |
 | 6443 | TCP | Kubernetes API (kubectl) | only for remote kubectl — restrict |
+| 9100 | TCP | node-exporter (host network), scraped by Prometheus | no |
 | 10250 | TCP | kubelet | no |
 | 8472 | UDP | flannel VXLAN | only when adding nodes |
 
@@ -98,6 +100,8 @@ Let's Encrypt validates HTTP-01 from changing IPs, so port 80 must stay reachabl
 | `argocd` | Argo CD (server, application controller, repo server, ApplicationSet controller, redis), ApplicationSet `homelab`, Applications, **cluster Secret `in-cluster`** with the cluster values |
 | `vault` | Vault server `vault-0` (containers `vault` + `unsealer`), its PV, Secret `vault-unseal-keys` (`platform/vault`) |
 | `external-secrets` | External Secrets Operator (`platform/external-secrets`); `ClusterSecretStore vault` is cluster-scoped |
+| `monitoring` | Prometheus Operator, Prometheus `prometheus-kps-0`, Alertmanager `alertmanager-kps-0`, Grafana, node-exporter, kube-state-metrics (`platform/monitoring`) |
+| `logging` | Loki `loki-0`, Alloy DaemonSet (`platform/logging`) |
 | `cluster-issuer` | empty (the ClusterIssuers are cluster-scoped; the namespace comes from `CreateNamespace`) |
 | `whoami`, … | one namespace per app (= folder name under `apps/`) |
 
@@ -111,6 +115,7 @@ Let's Encrypt validates HTTP-01 from changing IPs, so port 80 must stay reachabl
 | Argo CD admin password, settings | Secrets / ConfigMaps in `argocd` | settings yes (`helm/argo-cd/values.yaml`), password no |
 | PersistentVolume data | `/var/lib/rancher/k3s/storage/` (local-path) | no |
 | Vault secrets | Raft DB on the PV of `vault-0` | **no — snapshot it**, see [secrets.md](secrets.md#backup-and-restore) |
+| Metrics, logs, Grafana database | PVs of Prometheus, Loki, Alertmanager, Grafana (local-path) | dashboards/rules/data sources yes; history (10 days metrics, 7 days logs) no — not backed up |
 | Vault unseal key | Secret `vault/vault-unseal-keys` (k3s DB) + your password manager | **no — without it Vault data is unreadable** |
 | Vault root token | your password manager | no |
 | Site-specific settings | `.env` on your PC / server (git-ignored) | no — keep a private copy |

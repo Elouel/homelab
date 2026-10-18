@@ -1,0 +1,68 @@
+# Metrics of components that are not installed by Argo CD (k3s bundles Traefik; bootstrap.sh installs
+# cert-manager and Argo CD), so their charts can't ship these objects themselves.
+# Traefik (kube-system): the k3s Traefik chart exposes metrics on container port "metrics" (9100).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: traefik
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+---
+# cert-manager controller: Service cert-manager, port http-metrics (9402)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+spec:
+  namespaceSelector:
+    matchNames: [cert-manager]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: http-metrics
+---
+# Argo CD: the *-metrics Services enabled in helm/argo-cd/values.yaml (application controller, server, repo server)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [argocd-metrics, argocd-server-metrics, argocd-repo-server-metrics]
+  endpoints:
+    - port: http-metrics
+---
+# Loki and Alloy (platform/logging). Defined here so platform/logging doesn't depend on the CRDs of this chart.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: logging
+spec:
+  namespaceSelector:
+    matchNames: [logging]
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [loki, alloy]
+      - key: prometheus.io/service-monitor   # skips Service loki-headless (same pod)
+        operator: NotIn
+        values: ["false"]
+      - key: app.kubernetes.io/component     # skips Service loki-memberlist (gossip port only)
+        operator: Exists
+  endpoints:
+    - port: http-metrics

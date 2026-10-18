@@ -17,16 +17,24 @@ server:
       # Until it exists the certificate waits; cert-manager retries once the issuer is Ready.
       cert-manager.io/cluster-issuer: letsencrypt-prod
     tls: true   # Secret argocd-server-tls, filled by cert-manager
+  # Metrics Services (*-metrics, port http-metrics) are scraped by ServiceMonitor argocd in platform/monitoring.
+  # No serviceMonitor here: its CRD comes from platform/monitoring, which doesn't exist yet on a fresh cluster.
+  metrics:
+    enabled: true
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { memory: 256Mi }
 
 controller:
+  metrics:
+    enabled: true   # argocd_app_info: sync/health of every Application (alerts in platform/monitoring)
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { memory: 1Gi }
 
 repoServer:
+  metrics:
+    enabled: true
   resources:
     requests: { cpu: 25m, memory: 128Mi }
     limits: { memory: 512Mi }

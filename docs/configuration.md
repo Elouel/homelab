@@ -77,7 +77,7 @@ Copied to `/etc/rancher/k3s/config.yaml`. Same keys as `k3s server --help` flags
 | File | Release | Notes |
 |---|---|---|
 | `helm/cert-manager/values.yaml` | `cert-manager/cert-manager` | `crds.enabled: true` — the chart installs/upgrades its CRDs |
-| `helm/argo-cd/values.yaml` | `argocd/argocd` | `server.insecure` (TLS ends at Traefik), Ingress with class `traefik` and `cert-manager.io/cluster-issuer: letsencrypt-prod`, dex and notifications disabled, resource requests/limits for every component. `global.domain` comes from `.env` with `--set`. |
+| `helm/argo-cd/values.yaml` | `argocd/argocd` | `server.insecure` (TLS ends at Traefik), Ingress with class `traefik` and `cert-manager.io/cluster-issuer: letsencrypt-prod`, dex and notifications disabled, resource requests/limits for every component, metrics Services for the application controller, server and repo server (scraped by `platform/monitoring`, see [monitoring.md](monitoring.md); no ServiceMonitor here because its CRD comes from `platform/monitoring`). `global.domain` comes from `.env` with `--set`. |
 
 ## ApplicationSet (public template)
 
