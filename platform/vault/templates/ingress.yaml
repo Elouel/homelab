@@ -1,12 +1,25 @@
 {{- $host := .Values.host | default (printf "vault.%s" .Values.domain) }}
 # Vault UI + API at https://vault.<domain>. Service <fullnameOverride> (not -active) also reaches a sealed or
 # uninitialised pod (publishNotReadyAddresses), so the UI can show its status and unseal it by hand.
+# Traefik serves an Ingress on both entry points (80 and 443). The Middleware below sends HTTP requests to HTTPS so
+# tokens never go over plain HTTP. It only applies to this Ingress: cert-manager's HTTP-01 solver Ingress has its
+# own, more specific router and keeps answering on port 80.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: vault
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-redirect-https@kubernetescrd" .Release.Namespace }}
 spec:
   ingressClassName: traefik
   tls:

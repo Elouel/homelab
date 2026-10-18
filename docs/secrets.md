@@ -245,6 +245,8 @@ there.
 - **Vault is on the internet** at `https://vault.<BASE_DOMAIN>` (TLS from Let's Encrypt), reachable only from the IPs
   that the provider firewall in front of the VPS allows (see [architecture.md](architecture.md#network-ports-on-the-host)).
   Anyone who can connect from an allowed IP can attempt logins, so revoke the root token after setup and protect your tokens.
+  `http://` requests are redirected to `https://` (Traefik Middleware `vault/redirect-https` in `templates/ingress.yaml`),
+  so tokens never go over plain HTTP.
 - Copies in Kubernetes Secrets are encrypted at rest by k3s (`secrets-encryption`). The same goes for the
   unseal key in `vault-unseal-keys`, see the [trade-off](#restarts-auto-unseal).
 - gitleaks' built-in rules flag Vault tokens (`hvs.…`), but they can't recognise unseal keys. Never paste those anywhere.

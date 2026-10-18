@@ -91,8 +91,8 @@ It could live in `platform/traefik/` (a small Helm chart like the other platform
 A global redirect can interfere with HTTP-01 challenges. Test it with staging.
 
 Without it, Traefik serves every Ingress on port 80 as well as 443. To redirect a single Ingress, add a Traefik
-`Middleware` to its chart and reference it from the Ingress (as `platform/monitoring/templates/ingress.yaml` does for
-Grafana). cert-manager's HTTP-01 solver Ingress has its own, more specific router, so challenges keep working:
+`Middleware` to its chart and reference it from the Ingress (as the Grafana and Vault Ingresses in `platform/monitoring` and
+`platform/vault` do). cert-manager's HTTP-01 solver Ingress has its own, more specific router, so challenges keep working:
 
 ```yaml
 apiVersion: traefik.io/v1alpha1
