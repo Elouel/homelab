@@ -37,6 +37,7 @@ repos_reachable(){
 # Each render is kept in $RENDER for checks 9 to 11. --skip-tests: the charts' test pods are never deployed by
 # Argo CD, and the Vault chart's test pod would add a third hashicorp/vault image to check 9.
 RENDER=$(mktemp -d); trap 'rm -rf "$RENDER"' EXIT
+# render_file <chart>: the file in $RENDER that holds the rendered manifests of <chart>
 render_file(){ echo "$RENDER/$(echo "$1" | tr / _).yaml"; }
 if command -v helm >/dev/null 2>&1; then
   for c in $(echo "$FILES" | grep -E '(^|/)Chart\.yaml$' | xargs -n1 dirname); do

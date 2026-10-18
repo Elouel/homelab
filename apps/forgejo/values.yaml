@@ -68,7 +68,8 @@ forgejo:
         # Full URLs (`uses: https://code.forgejo.org/actions/checkout@v4`) work as well.
         DEFAULT_ACTIONS_URL: https://github.com
   # Registers the runner with Forgejo using the shared secret (offline registration). Idempotent, so it runs
-  # on every pod start; the runner pod then connects with the same secret (templates/runner.yaml).
+  # on every pod start, and again whenever the mounted Secret changes (the kubelet updates the file after a Vault
+  # change); the runner pod then connects with the same secret (templates/runner.yaml).
   extraContainers:
     - name: register-runner
       image: code.forgejo.org/forgejo/forgejo:15.0.10-rootless   # keep equal to image.tag (tools/check.sh compares them)
@@ -76,12 +77,19 @@ forgejo:
       args:
         - |
           trap 'exit 0' TERM
-          until forgejo forgejo-cli actions register --name homelab --secret-file /run/runner/token --keep-labels >/dev/null; do
-            echo "register-runner: registration failed, retrying in 30 s"
+          done_sum=""
+          while :; do
+            sum=$(sha256sum /run/runner/token)
+            if [ "$sum" != "$done_sum" ]; then
+              if forgejo forgejo-cli actions register --name homelab --secret-file /run/runner/token --keep-labels >/dev/null; then
+                done_sum=$sum
+                echo "register-runner: runner homelab registered"
+              else
+                echo "register-runner: registration failed, retrying in 30 s"
+              fi
+            fi
             sleep 30 & wait $!
           done
-          echo "register-runner: runner homelab registered"
-          while :; do sleep 3600 & wait $!; done
       env:
         - { name: GITEA_APP_INI, value: /data/gitea/conf/app.ini }
         - { name: GITEA_CUSTOM, value: /data/gitea }
