@@ -1,0 +1,112 @@
+# domain / serverIP come from the cluster (passed in by the homelab ApplicationSet). Placeholder only.
+domain: example.com
+# host: git.example.com   # optional override; defaults to git.<domain>
+
+# Required in Vault (KV v2 mount kv/, see docs/forgejo.md#first-time-setup):
+#   kv/apps/forgejo/admin    keys username, password   -> Secret forgejo-admin (first admin account, kept in sync)
+#   kv/apps/forgejo/runner   key  token                -> Secret forgejo-runner-token
+#                            token = 40 lowercase hex characters, shared by Forgejo and the runner (offline registration)
+
+# Forgejo Runner (templates/runner.yaml): one runner pod with a Docker-in-Docker sidecar.
+# Its name in Forgejo (homelab) is set by the register-runner sidecar below.
+runner:
+  image: data.forgejo.org/forgejo/runner:13.2.0
+  dindImage: docker.io/library/docker:29.9.1-dind
+  capacity: 1                       # jobs at the same time; >1 lets concurrent jobs see each other's containers
+  # runs-on label -> image the job runs in. ubuntu-* give GitHub-style workflows a similar (large) environment;
+  # images are pulled on first use and cached in the dind volume until the pod restarts.
+  labels:
+    - docker:docker://docker.io/library/node:24.22.0-bookworm
+    - ubuntu-latest:docker://ghcr.io/catthehacker/ubuntu:act-24.04-20260815
+    - ubuntu-24.04:docker://ghcr.io/catthehacker/ubuntu:act-24.04-20260815
+  dockerStorage: 20Gi               # emptyDir for the dind image cache; the pod is evicted (and restarts empty) if it grows past this
+
+# Values for the official Forgejo chart (dependency in Chart.yaml).
+forgejo:
+  # Fixed object names whatever the release name is: Deployment forgejo, Services forgejo-http / forgejo-ssh.
+  # templates/ingress.yaml and templates/runner.yaml rely on them.
+  fullnameOverride: forgejo
+  image:
+    tag: "15.0.10"                  # rootless image -> 15.0.10-rootless; keep equal to the register-runner image below (tools/check.sh compares them)
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  initContainers:
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 256Mi }
+  persistence:
+    claimName: forgejo-data
+    size: 10Gi                      # repositories, SQLite DB, attachments, packages; local-path PV
+    annotations:
+      helm.sh/resource-policy: keep
+      # Argo CD ignores the Helm annotation above: keep the volume when the Application is deleted
+      argocd.argoproj.io/sync-options: Delete=false
+  # The ingress is in templates/ingress.yaml (the chart can't build the host from .Values.domain)
+  ingress:
+    enabled: false
+  test:
+    enabled: false                  # Argo CD doesn't run Helm tests; the test pod uses an unpinned busybox
+  gitea:
+    admin:
+      existingSecret: forgejo-admin # from Vault kv/apps/forgejo/admin (templates/externalsecrets.yaml)
+      passwordMode: keepUpdated     # every pod start sets the password to the Vault value. gitleaks:allow (mode name, not a secret)
+    # ConfigMap forgejo-server (templates/server-config.yaml): DOMAIN and ROOT_URL built from .Values.domain
+    additionalConfigSources:
+      - configMap:
+          name: forgejo-server
+    config:
+      APP_NAME: Forgejo
+      server:
+        DISABLE_SSH: true           # clone over HTTPS; port 22 on the host is the server's own SSH
+        START_SSH_SERVER: false
+      service:
+        DISABLE_REGISTRATION: true  # the admin creates accounts
+      actions:
+        ENABLED: true
+        # `uses: actions/checkout@v4` is fetched from GitHub, as in GitHub Actions.
+        # Full URLs (`uses: https://code.forgejo.org/actions/checkout@v4`) work as well.
+        DEFAULT_ACTIONS_URL: https://github.com
+  # Registers the runner with Forgejo using the shared secret (offline registration). Idempotent, so it runs
+  # on every pod start, and again whenever the mounted Secret changes (the kubelet updates the file after a Vault
+  # change); the runner pod then connects with the same secret (templates/runner.yaml).
+  extraContainers:
+    - name: register-runner
+      image: code.forgejo.org/forgejo/forgejo:15.0.10-rootless   # keep equal to image.tag (tools/check.sh compares them)
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          trap 'exit 0' TERM
+          done_sum=""
+          while :; do
+            sum=$(sha256sum /run/runner/token)
+            if [ "$sum" != "$done_sum" ]; then
+              if forgejo forgejo-cli actions register --name homelab --secret-file /run/runner/token --keep-labels >/dev/null; then
+                done_sum=$sum
+                echo "register-runner: runner homelab registered"
+              else
+                echo "register-runner: registration failed, retrying in 30 s"
+              fi
+            fi
+            sleep 30 & wait $!
+          done
+      env:
+        - { name: GITEA_APP_INI, value: /data/gitea/conf/app.ini }
+        - { name: GITEA_CUSTOM, value: /data/gitea }
+        - { name: GITEA_WORK_DIR, value: /data }
+        - { name: GITEA_TEMP, value: /tmp/gitea }
+        - { name: HOME, value: /data/gitea/git }
+      volumeMounts:
+        - { name: data, mountPath: /data }
+        - { name: temp, mountPath: /tmp }
+        - { name: runner-token, mountPath: /run/runner, readOnly: true }
+      securityContext:
+        allowPrivilegeEscalation: false
+      resources:
+        requests: { cpu: 5m, memory: 32Mi }
+        limits: { memory: 128Mi }
+  extraVolumes:
+    - name: runner-token
+      secret:
+        secretName: forgejo-runner-token
+        defaultMode: 0440           # readable by the git user via fsGroup 1000

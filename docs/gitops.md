@@ -76,7 +76,8 @@ an empty namespace of its name; that is harmless.
 
 Within one Application, `argocd.argoproj.io/sync-wave` orders resources: e.g. `ClusterSecretStore vault` is
 wave `1`, so it is applied only after the External Secrets operator and its webhook (wave `0`) are healthy.
-Wrapper charts (`platform/vault`, `platform/external-secrets`) declare the upstream chart in `Chart.yaml`;
+Wrapper charts (`platform/vault`, `platform/external-secrets`, `apps/forgejo`) declare the upstream chart in `Chart.yaml`
+(from a Helm repository, or a public OCI registry such as `oci://code.forgejo.org/forgejo-helm`, which needs no credentials);
 `charts/` and `Chart.lock` are not committed, so the repo server downloads it (`helm dependency build`) whenever it
 renders a commit it has no cached manifests for. If the chart repository is unreachable then, the Application shows
 `ComparisonError` until it is reachable again. Resources that are already running are not affected.

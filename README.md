@@ -14,7 +14,7 @@ flowchart LR
   BS --> AR["Argo CD + ApplicationSet"]
   GH -->|"poll about every 3 min"| AR
   AR --> P["platform/ - ClusterIssuers, Vault, External Secrets"]
-  AR --> A["apps/ - your apps"]
+  AR --> A["apps/ - Forgejo + runner, your apps"]
   U["Internet"] -->|"80 / 443"| K3S
 ```
 
@@ -43,6 +43,7 @@ initial password). To deploy apps, add a folder under `apps/` and `git push`.
 | ApplicationSet `homelab` | — | `bootstrap.sh` (from `argocd/homelab.yaml`) |
 | Vault | v2.0.4 (chart `hashicorp/vault` 0.34.1) | Argo CD, `platform/vault` |
 | External Secrets Operator | v2.13.0 (chart `external-secrets` 2.13.0) | Argo CD, `platform/external-secrets` |
+| Forgejo (Git server, Forgejo Actions) + Forgejo Runner | Forgejo 15.0.10 (chart `forgejo-helm/forgejo` 17.3.1), runner 13.2.0 | Argo CD, `apps/forgejo` |
 | `platform/*`, `apps/*` | — | Argo CD, from Git |
 
 Versions are pinned in [`versions.env`](versions.env), and for platform components in their `Chart.yaml` / `values.yaml`.
@@ -58,6 +59,7 @@ Versions are pinned in [`versions.env`](versions.env), and for platform componen
 | [docs/adding-an-app.md](docs/adding-an-app.md) | deploy something new |
 | [docs/apps.md](docs/apps.md) | see what's deployed |
 | [docs/secrets.md](docs/secrets.md) | set up Vault (auto-unseal), give an app or a build a secret |
+| [docs/forgejo.md](docs/forgejo.md) | set up Forgejo and its runner, write GitHub-style workflows for Forgejo Actions |
 | [docs/tls-and-ingress.md](docs/tls-and-ingress.md) | debug certificates or hostnames |
 | [docs/secret-scanning.md](docs/secret-scanning.md) | understand the gitleaks hook and what's not allowed in this public repo |
 | [docs/operations.md](docs/operations.md) | upgrade, back up, restore, change IP, troubleshoot, harden |
