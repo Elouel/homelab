@@ -130,11 +130,23 @@ else skip "platform/external-secrets was not rendered (see check 3)"; fi
 
 echo "11. Forgejo server image and register-runner sidecar image have the same tag"
 # The chart's server and init containers use forgejo.image.tag; the sidecar names its image itself. All rendered
-# forgejo/forgejo images must have one tag.
+# forgejo/forgejo images must have one tag, and the register-runner container must exist and be one of them.
+# container_image <file> <name>: the image of every rendered container (list item) called <name>, one per line.
+container_image(){ awk -v N="$2" '
+  function pop(){ if (nm[sp] == N) print im[sp]; sp-- }
+  { match($0, /^ */); i = RLENGTH }
+  $0 ~ /^ *- [A-Za-z_]+:/ { c = i + 2; while (sp > 0 && col[sp] >= c) pop(); sp++; col[sp] = c; nm[sp] = im[sp] = "" }
+  $0 ~ /^ *[A-Za-z_]+:/   { c = i; while (sp > 0 && col[sp] > c) pop() }
+  $0 !~ /^ *(- )?[A-Za-z_]+:/ { next }
+  sp > 0 && col[sp] == c { k = substr($0, c + 1); v = k; sub(/^[A-Za-z_]+: */, "", v); gsub(/["'\'' ]/, "", v)
+                           if (k ~ /^name:/) nm[sp] = v; if (k ~ /^image:/) im[sp] = v }
+  END { while (sp > 0) pop() }' "$1"; }
 if ft=$(img_tags apps/forgejo forgejo/forgejo); then
   fu=$(printf '%s\n' "$ft" | sort -u)
-  [ "$(lines "$fu")" -eq 1 ] && ok "forgejo/forgejo $fu" \
-    || bad "apps/forgejo/values.yaml: forgejo.image.tag and the register-runner image must be the same Forgejo version (rendered: $(echo $fu))"
+  ri=$(container_image "$(render_file apps/forgejo)" register-runner)
+  [ "$(lines "$fu")" -eq 1 ] && [ "$(lines "$ri")" -eq 1 ] && [ "${ri##*forgejo/forgejo:}" = "$fu" ] \
+    && ok "forgejo/forgejo $fu (server and register-runner)" \
+    || bad "apps/forgejo/values.yaml: forgejo.image.tag and the register-runner image must be the same Forgejo version (rendered: $(echo $fu), register-runner: ${ri:-missing})"
 else skip "apps/forgejo was not rendered (see check 3)"; fi
 
 echo
