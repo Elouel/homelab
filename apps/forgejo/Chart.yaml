@@ -1,0 +1,9 @@
+apiVersion: v2
+name: forgejo
+version: 0.1.0
+description: Forgejo (Git server with Forgejo Actions) + a Forgejo Runner with Docker-in-Docker
+dependencies:
+  # Official chart, published only as OCI. Bump version here; the Forgejo image tag is pinned in values.yaml.
+  - name: forgejo
+    version: 17.3.1
+    repository: oci://code.forgejo.org/forgejo-helm
