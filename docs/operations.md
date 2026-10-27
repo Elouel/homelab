@@ -32,6 +32,7 @@ The repo is not cloned on the server. "Copy files to the server" means the scp b
 | External Secrets | bump the dependency `version` in `platform/external-secrets/Chart.yaml` **and** the three image tags (controller, `webhook`, `certController`) in its `values.yaml` to `v<version>` (`tools/check.sh` compares the rendered images), push | Read the release notes for CRD / API version changes (`external-secrets.io/v1` is used) |
 | Monitoring | bump `kube-prometheus-stack` **and** `prometheus-operator-crds` in `platform/monitoring/Chart.yaml` to versions with the same appVersion (Prometheus Operator; `tools/check.sh` compares them), push | Read the kube-prometheus-stack "Upgrading" notes in its README for each major. Image tags come from the chart. Don't change `fullnameOverride` (renames the PVCs) |
 | Logging | bump `loki` / `alloy` in `platform/logging/Chart.yaml`, push | Read the Loki chart's upgrade notes (values are renamed between majors) and the Loki release notes. Keep the `schemaConfig` entry; a new schema needs a new entry with a future `from` date |
+| Forgejo | bump the dependency `version` in `apps/forgejo/Chart.yaml`, and `forgejo.image.tag` **and** the `register-runner` image in its `values.yaml` to the same version (`tools/check.sh` compares the rendered images), push. Runner and `dind`: `runner.image` / `runner.dindImage` | Read the Forgejo release notes. Back up the PV first ([forgejo.md](forgejo.md#backup-and-upgrade)): the DB is migrated on start, no downgrade |
 | Apps | change the image tag or chart version in `apps/<name>`, push | — |
 
 Before any platform upgrade, take a [backup](#backups).
@@ -46,12 +47,13 @@ What Git does **not** contain:
 | Cluster datastore (all objects, Argo CD admin password) | `/var/lib/rancher/k3s/server/db/` (SQLite) | Cold copy, see below |
 | Secrets encryption key | `/var/lib/rancher/k3s/server/cred/` | Same tarball. **Without it, the encrypted Secrets in the DB are unreadable** |
 | Server token + certs | `/var/lib/rancher/k3s/server/token`, `.../tls/` | Same tarball |
-| App data (PVs) | `/var/lib/rancher/k3s/storage/` | `tar`/`restic` it, ideally with the app scaled to 0 |
+| App data (PVs) | `/var/lib/rancher/k3s/storage/` | `tar`/`restic` it, ideally with the app scaled to 0. Stop the Argo CD application controller first ([pausing GitOps](gitops.md#pausing-gitops)), or self-heal scales the app back up |
 | Hand-made Secrets | in the DB | Covered by the DB backup. Also keep the values in your password manager |
 | Vault data | PV of `vault-0` (Raft) | `vault operator raft snapshot save`, see [secrets.md](secrets.md#backup-and-restore) |
 | Metrics and log history | PVs of Prometheus and Loki | Not backed up: only the last 10 / 7 days. Dashboards, rules and settings provisioned from Git come back by themselves |
 | Grafana UI state (users, preferences, dashboards made in the UI), Alertmanager silences | PVs of Grafana and `alertmanager-kps-0` | Not in Git, lost with the PV. Covered by the app PV backup above; or export UI dashboards as JSON and add them to Git |
 | Vault unseal key + root token | your password manager (key also in Secret `vault/vault-unseal-keys`) | Needed to restore a snapshot or recreate the Secret |
+| Forgejo data | PV `forgejo-data` | `tar` with Forgejo and the Argo CD application controller scaled to 0 (self-heal would restart Forgejo), see [forgejo.md](forgejo.md#backup-and-upgrade) |
 
 Cold datastore backup (about 1 minute of API downtime; running pods keep running):
 
@@ -146,6 +148,10 @@ Known gaps on the current server, in priority order:
    root token after setup ([secrets.md](secrets.md#first-time-setup)). Optionally move the unseal key off the node with a
    cloud KMS seal.
 5. **Backups**: automate the datastore, PV and Vault snapshot backups to off-site storage.
+6. **Forgejo Actions**: the runner's `dind` container is privileged and every job can use its Docker API, so any
+   workflow that runs (and every action it uses) can take over the node. Until the runner moves to a separate VM
+   without cluster credentials or app data, keep Forgejo registration closed, repository write access and fork
+   approvals to people you would give root, and pin actions to commit SHAs ([forgejo.md](forgejo.md#security)).
 
 ## Uninstall
 

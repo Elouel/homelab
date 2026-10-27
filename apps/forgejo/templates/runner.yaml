@@ -1,0 +1,133 @@
+{{- /* The runner talks to Forgejo inside the cluster; jobs clone from ROOT_URL (https://git.<domain>). */}}
+{{- define "forgejo-runner.url" -}}
+http://{{ .Values.forgejo.fullnameOverride }}-http.{{ .Release.Namespace }}.svc:3000/
+{{- end }}
+{{- /* Forgejo Runner config. RUNNER_UUID is filled in at pod start (see the runner container below). */}}
+{{- define "forgejo-runner.config" }}
+log:
+  level: info
+  job_level: info
+runner:
+  capacity: {{ .Values.runner.capacity }}
+  # Job containers reach the Docker-in-Docker daemon with these (docker build, docker run in a step)
+  envs:
+    DOCKER_HOST: tcp://localhost:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: /certs/client
+  timeout: 3h
+  shutdown_timeout: 0s              # cancel running jobs at once when the pod stops (dind stops with it)
+  fetch_timeout: 30s
+  fetch_interval: 2s
+  labels:
+    {{- toYaml .Values.runner.labels | nindent 4 }}
+cache:
+  enabled: true
+  dir: /data/cache                  # emptyDir: the actions/cache store is lost when the pod restarts
+container:
+  # Jobs share the pod's network: they reach dind at localhost:2376, the runner's cache server, and cluster DNS
+  network: host
+  privileged: false
+  options: -v /certs/client:/certs/client:ro
+  valid_volumes:
+    - /certs/client
+  docker_host: "-"
+server:
+  connections:
+    forgejo:
+      url: {{ include "forgejo-runner.url" . }}
+      uuid: RUNNER_UUID
+      token_url: file:/run/runner/token   # gitleaks:allow (path of the mounted Secret, not a secret)
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-runner
+data:
+  config.yml: |
+    {{- include "forgejo-runner.config" . | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo-runner
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: forgejo-runner }
+  template:
+    metadata:
+      labels: { app: forgejo-runner }
+      annotations:
+        checksum/config: {{ include "forgejo-runner.config" . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: runner
+          image: {{ .Values.runner.image }}
+          # The image's entrypoint (dumb-init) runs this script and forwards signals to the runner.
+          args:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if ! grep -qxE '[0-9a-f]{40}' /run/runner/token; then
+                echo "runner: Secret forgejo-runner-token (Vault kv/apps/forgejo/runner, key token) must be 40 lowercase hex characters"
+                exit 1
+              fi
+              # Offline registration: Forgejo uses the first 16 characters of the secret as the 16 bytes of the
+              # runner's UUID (the value 'forgejo-cli actions register' prints), the whole secret is the token.
+              uuid=$(head -c 16 /run/runner/token | od -An -tx1 | tr -d ' \n' \
+                | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/')
+              sed "s/RUNNER_UUID/$uuid/" /etc/forgejo-runner/config.yml > /data/config.yml
+              until nc -z localhost 2376; do echo "runner: waiting for the docker daemon"; sleep 5; done
+              until wget -q -O /dev/null {{ include "forgejo-runner.url" . }}api/healthz; do echo "runner: waiting for Forgejo"; sleep 5; done
+              exec forgejo-runner --config /data/config.yml daemon
+          env:
+            - { name: DOCKER_HOST, value: "tcp://localhost:2376" }
+            - { name: DOCKER_TLS_VERIFY, value: "1" }
+            - { name: DOCKER_CERT_PATH, value: /certs/client }
+          volumeMounts:
+            - { name: config, mountPath: /etc/forgejo-runner, readOnly: true }
+            - { name: token, mountPath: /run/runner, readOnly: true }
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+            - { name: docker-certs, mountPath: /certs, readOnly: true }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 512Mi }
+        # Docker-in-Docker: runs the job containers. Needs a privileged container, see docs/forgejo.md#security.
+        - name: dind
+          image: {{ .Values.runner.dindImage }}
+          env:
+            - { name: DOCKER_TLS_CERTDIR, value: /certs }   # generates TLS certs; the client half is shared with the runner and jobs
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - { name: docker-certs, mountPath: /certs }
+            - { name: docker-storage, mountPath: /var/lib/docker }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 3Gi }         # includes every job container
+      volumes:
+        - name: config
+          configMap: { name: forgejo-runner }
+        - name: token
+          secret:
+            secretName: forgejo-runner-token
+            defaultMode: 0440               # readable by the runner user via fsGroup
+        - { name: data, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+        - { name: docker-certs, emptyDir: {} }
+        - name: docker-storage
+          emptyDir: { sizeLimit: {{ .Values.runner.dockerStorage }} }

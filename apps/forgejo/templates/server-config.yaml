@@ -1,0 +1,12 @@
+{{- $host := .Values.host | default (printf "git.%s" .Values.domain) }}
+# Extra app.ini settings that depend on the cluster's domain (the Forgejo chart's own values can't use .Values.domain).
+# Listed in forgejo.gitea.additionalConfigSources; each key is an app.ini section. Applied when the pod starts:
+# after a domain change run 'kubectl -n forgejo rollout restart deploy/forgejo'.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-server
+data:
+  server: |
+    DOMAIN={{ $host }}
+    ROOT_URL=https://{{ $host }}/

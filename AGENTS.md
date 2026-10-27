@@ -94,8 +94,9 @@ It checks shell syntax, YAML, Helm rendering (if `helm` is installed), that no `
 into committable files, gitleaks (if installed), Markdown links, that every `apps/`/`platform/` folder is
 listed in `docs/apps.md` (and is a Helm chart), that Mermaid blocks are well-formed,
 that the rendered Vault server and unsealer images have the same tag, that the External Secrets image tags match its chart
-version, that the Prometheus Operator CRDs chart and kube-prometheus-stack ship the same operator version, and that no
-rendered image is untagged or `latest`. All checks must pass before you commit. Wrapper chart dependencies are downloaded
+version, that the Forgejo server and `register-runner` sidecar images have the same tag, that the Prometheus Operator CRDs
+chart and kube-prometheus-stack ship the same operator version, and that no rendered image is untagged or `latest`.
+All checks must pass before you commit. Wrapper chart dependencies are downloaded
 only when missing. If the download fails, the render check shows `skip` when the chart repository is unreachable
 (offline) and `FAIL` when it is reachable (wrong name or version in `Chart.yaml`).
 

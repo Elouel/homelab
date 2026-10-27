@@ -10,6 +10,7 @@ under `platform/` or `apps/`.
 | `platform/external-secrets` | `platform-external-secrets` | `external-secrets` | wrapper of `external-secrets` 2.13.0 (image v2.13.0) | — | none in Vault (logs in with its ServiceAccount) | none |
 | `platform/monitoring` | `platform-monitoring` | `monitoring` | wrapper of `kube-prometheus-stack` 92.10.1 (Prometheus Operator v0.94.1) + `prometheus-operator-crds` 32.0.1 | `https://grafana.<BASE_DOMAIN>` | `kv/apps/monitoring/grafana` (`admin-user`, `admin-password`), `kv/apps/monitoring/alertmanager-telegram` (`bot-token`, `chat-id`) | 10 Gi PV Prometheus, 1 Gi Alertmanager, 1 Gi Grafana |
 | `platform/logging` | `platform-logging` | `logging` | wrapper of `grafana-community/loki` 18.17.1 (Loki 3.7.8) + `grafana/alloy` 1.13.1 (Alloy v1.20.1) | — (read in Grafana) | none | 10 Gi PV `storage-loki-0` |
+| `apps/forgejo` | `forgejo` | `forgejo` | wrapper of `forgejo-helm/forgejo` 17.3.1 (Forgejo 15.0.10) + local runner manifests (Forgejo Runner 13.2.0, `docker:29.9.1-dind`) | `https://git.<BASE_DOMAIN>` | `apps/forgejo/admin` (`username`, `password`), `apps/forgejo/runner` (`token`, 40 hex characters), see [forgejo.md](forgejo.md#first-time-setup) | 10 Gi PV `forgejo-data` (repositories, SQLite DB; kept when the Application is deleted). Runner: `emptyDir` image cache (up to 20 Gi) |
 | `apps/whoami` | `whoami` | `whoami` | local chart | `https://whoami.<BASE_DOMAIN>` | none | none |
 
 Installed by `bootstrap.sh` rather than from these folders: cert-manager, and Argo CD itself at
@@ -55,6 +56,14 @@ as a DaemonSet that reads every pod's logs and the Kubernetes events through the
 `http://loki.logging.svc:3100`. Grafana (`platform/monitoring`) has Loki as a data source. See [monitoring.md](monitoring.md).
 
 ## Apps
+
+### forgejo
+
+Forgejo Git server with Forgejo Actions, one replica, SQLite on a local-path PV, SSH disabled (Git over HTTPS only),
+self-registration off. Traefik terminates TLS and forwards to Service `forgejo-http`. `uses:` actions without a host
+come from `https://github.com`. One Forgejo Runner (`forgejo-runner`: runner + privileged Docker-in-Docker sidecar)
+runs jobs for `runs-on: docker`, `ubuntu-latest` and `ubuntu-24.04`; it registers itself with a shared secret from
+Vault, no UI step needed. The first admin account also comes from Vault. See [forgejo.md](forgejo.md).
 
 ### whoami
 
