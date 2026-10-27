@@ -210,8 +210,10 @@ data:
 - Grafana is on the internet at `https://grafana.<BASE_DOMAIN>` (TLS from Let's Encrypt). Like every endpoint here, only
   the IPs that the provider firewall allows can reach it ([architecture.md](architecture.md#network-ports-on-the-host)).
   Use a strong admin password; Grafana can query every metric and log line. `http://` requests are redirected to
-  `https://` (Traefik Middleware `monitoring/redirect-https` in `templates/ingress.yaml`), so the login never goes over
-  plain HTTP.
+  `https://` (Traefik Middleware `monitoring/redirect-https` in `templates/ingress.yaml`), so browsers end up on HTTPS.
+  A request sent to `http://` still crosses the network in plaintext before the redirect, so always use the `https://`
+  URL. The session cookie is marked `Secure` (`grafana.ini` `security.cookie_secure` in `values.yaml`), so browsers
+  never send it over HTTP.
 - Grafana's sidecars may read **ConfigMaps** in all namespaces, not Secrets (`templates/grafana-rbac.yaml`; the upstream
   chart would grant read on every Secret). The Loki rules sidecar, which would get the same, is off.
 - Alloy may read pods, pod logs, namespaces, events and nodes only (the chart default also includes all Secrets).

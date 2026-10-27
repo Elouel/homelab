@@ -131,6 +131,9 @@ kube-prometheus-stack:
   grafana:
     fullnameOverride: grafana        # Service grafana; templates/ingress.yaml relies on it
     defaultDashboardsTimezone: browser
+    grafana.ini:
+      security:
+        cookie_secure: true          # session cookie is sent over HTTPS only (default false)
     admin:
       existingSecret: grafana-admin  # ExternalSecret in templates/externalsecrets.yaml
       userKey: admin-user

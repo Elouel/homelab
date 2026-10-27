@@ -246,7 +246,8 @@ there.
   that the provider firewall in front of the VPS allows (see [architecture.md](architecture.md#network-ports-on-the-host)).
   Anyone who can connect from an allowed IP can attempt logins, so revoke the root token after setup and protect your tokens.
   `http://` requests are redirected to `https://` (Traefik Middleware `vault/redirect-https` in `templates/ingress.yaml`),
-  so tokens never go over plain HTTP.
+  but a request sent to `http://` (with its `X-Vault-Token` header) has already crossed the network in plaintext.
+  Always use `https://` (e.g. `VAULT_ADDR=https://vault.<BASE_DOMAIN>`).
 - Copies in Kubernetes Secrets are encrypted at rest by k3s (`secrets-encryption`). The same goes for the
   unseal key in `vault-unseal-keys`, see the [trade-off](#restarts-auto-unseal).
 - gitleaks' built-in rules flag Vault tokens (`hvs.…`), but they can't recognise unseal keys. Never paste those anywhere.

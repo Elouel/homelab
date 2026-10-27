@@ -1,9 +1,10 @@
 {{- $host := .Values.host | default (printf "grafana.%s" .Values.domain) }}
 # Grafana UI at https://grafana.<domain>. Prometheus and Alertmanager have no Ingress: use Grafana
 # (Explore, Alerting) or kubectl port-forward (docs/monitoring.md).
-# Traefik serves an Ingress on both entry points (80 and 443). The Middleware below sends HTTP requests to HTTPS so
-# the login never goes over plain HTTP. It only applies to this Ingress: cert-manager's HTTP-01 solver Ingress has
-# its own, more specific router and keeps answering on port 80.
+# Traefik serves an Ingress on both entry points (80 and 443). The Middleware below redirects HTTP requests to HTTPS.
+# A request sent to http:// has already crossed the network in plaintext; the session cookie is Secure (values.yaml)
+# so browsers never send it over HTTP. It only applies to this Ingress: cert-manager's HTTP-01 solver Ingress has its
+# own, more specific router and keeps answering on port 80.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
