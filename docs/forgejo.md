@@ -198,9 +198,28 @@ until kubectl -n forgejo logs deploy/forgejo-runner -c runner | grep -q 'declare
 Steps 3 and 4 wait without a time limit. If one takes more than 5 minutes, press Ctrl-C:
 `kubectl -n forgejo get externalsecret forgejo-runner-token` shows why the sync fails (step 3), and
 `kubectl -n forgejo logs deploy/forgejo -c register-runner` why the registration fails (step 4).
-**Recovering from an interrupted rotation:** whatever the order so far, both sides read the current Secret on start.
-Restart `deploy/forgejo`, wait for `runner homelab registered` in its `register-runner` log, then restart
-`deploy/forgejo-runner`. Finally, **Site administration → Actions → Runners** must show `homelab` online once.
+**Recovering from an interrupted rotation:** whatever the order so far, both sides read the current Secret on start,
+so first make sure the Secret holds what is in Vault, then restart Forgejo, then the runner. On the server (root):
+
+```bash
+# 1. re-read Vault now, and wait until External Secrets has synced after this point in time
+t=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+kubectl -n forgejo annotate externalsecret forgejo-runner-token force-sync=$(date +%s) --overwrite
+until r=$(kubectl -n forgejo get externalsecret forgejo-runner-token -o jsonpath='{.status.refreshTime}') \
+  && [ -n "$r" ] && ! [[ "$r" < "$t" ]]; do sleep 5; done
+# 2. restart Forgejo, so register-runner registers the current value, and wait for it
+kubectl -n forgejo rollout restart deploy/forgejo
+kubectl -n forgejo rollout status deploy/forgejo
+until kubectl -n forgejo logs deploy/forgejo -c register-runner | grep -q 'runner homelab registered'; do sleep 5; done
+# 3. only now restart the runner, and wait until it has connected
+kubectl -n forgejo rollout restart deploy/forgejo-runner
+kubectl -n forgejo rollout status deploy/forgejo-runner
+until kubectl -n forgejo logs deploy/forgejo-runner -c runner | grep -q 'declared successfully'; do sleep 5; done
+```
+
+If step 1 takes more than a minute, press Ctrl-C and check `kubectl -n forgejo get externalsecret forgejo-runner-token`
+(the sync fails, e.g. the Vault value is missing). Finally, **Site administration → Actions → Runners** must show
+`homelab` online once.
 
 A value with **new** first 16 characters registers a second runner; delete the old, offline one in **Site
 administration → Actions → Runners**.
