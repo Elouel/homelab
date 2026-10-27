@@ -1,0 +1,152 @@
+# domain / serverIP are passed in by the homelab ApplicationSet but not used here (no Ingress: logs are
+# read in Grafana, platform/monitoring).
+
+# Values for grafana-community/loki (dependency in Chart.yaml): one Loki pod (Monolithic mode) with its
+# data on a local-path PV. Image tag comes from the pinned chart version.
+loki:
+  fullnameOverride: loki             # Service loki:3100 - Alloy (below) and Grafana's data source use it
+  deploymentMode: Monolithic
+  loki:
+    auth_enabled: false              # one tenant ("fake"); only reachable inside the cluster
+    commonConfig:
+      replication_factor: 1
+    storage:
+      type: filesystem               # chunks and index on the PV (/var/loki)
+    schemaConfig:
+      configs:
+        - from: "2026-10-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index: { prefix: index_, period: 24h }
+    limits_config:
+      retention_period: 168h         # 7 days; the compactor deletes older logs
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+      max_cache_freshness_per_query: 10m
+      split_queries_by_interval: 15m
+      query_timeout: 300s
+      volume_enabled: true
+    compactor:
+      retention_enabled: true
+      delete_request_store: filesystem
+    querier:
+      max_concurrent: 2
+  singleBinary:
+    replicas: 1
+    sidecar: false                   # rules sidecar: no Loki alert rules are used
+    persistence:
+      size: 10Gi                     # local-path PV under /var/lib/rancher/k3s/storage
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { memory: 1Gi }
+    extraEnv:
+      - name: GOMEMLIMIT             # a little below the memory limit, so Go frees memory before an OOM kill
+        value: 900MiB
+  # Everything below is for the other deployment modes or is optional; all off for a single small node.
+  gateway: { enabled: false }        # nginx in front of Loki; not needed without multi-tenancy or an Ingress
+  chunksCache: { enabled: false }    # memcached; the default asks for several GiB of memory
+  resultsCache: { enabled: false }
+  lokiCanary: { enabled: false }
+  test: { enabled: false }
+  minio: { enabled: false }
+  ruler: { enabled: false }
+  sidecar:
+    rules: { enabled: false }        # no rules sidecar, so its ClusterRole (read on all Secrets) gets no rules
+  backend: { replicas: 0 }
+  read: { replicas: 0 }
+  write: { replicas: 0 }
+  ingester: { replicas: 0 }
+  querier: { replicas: 0 }
+  queryFrontend: { replicas: 0 }
+  queryScheduler: { replicas: 0 }
+  distributor: { replicas: 0 }
+  compactor: { replicas: 0 }
+  indexGateway: { replicas: 0 }
+  bloomGateway: { replicas: 0 }
+  bloomPlanner: { replicas: 0 }
+  bloomBuilder: { replicas: 0 }
+
+# Values for grafana/alloy (dependency in Chart.yaml): a DaemonSet that reads the logs of every pod on its node
+# through the Kubernetes API (no host mounts, not root) plus the cluster's Events, and pushes them to Loki.
+alloy:
+  fullnameOverride: alloy
+  crds:
+    create: false                    # PodLogs CRD, not used
+  # Only what the config below needs (the chart's default also grants read on all Secrets and ConfigMaps).
+  rbac:
+    rules:
+      - apiGroups: [""]
+        resources: [pods, pods/log, namespaces, events]
+        verbs: [get, list, watch]
+    clusterRules:
+      - apiGroups: [""]
+        resources: [nodes]
+        verbs: [get, list, watch]
+  alloy:
+    enableReporting: false           # no anonymous usage statistics to Grafana Labs
+    resources:
+      requests: { cpu: 20m, memory: 96Mi }
+      limits: { memory: 384Mi }
+    configMap:
+      content: |-
+        // Pods on this node ($HOSTNAME is the node name, set by the chart)
+        discovery.kubernetes "pods" {
+          role = "pod"
+          selectors {
+            role  = "pod"
+            field = "spec.nodeName=" + sys.env("HOSTNAME")
+          }
+        }
+
+        // Loki labels: keep them few (namespace, pod, container, app); everything else is in the log line
+        discovery.relabel "pods" {
+          targets = discovery.kubernetes.pods.targets
+          rule {
+            source_labels = ["__meta_kubernetes_namespace"]
+            target_label  = "namespace"
+          }
+          rule {
+            source_labels = ["__meta_kubernetes_pod_name"]
+            target_label  = "pod"
+          }
+          rule {
+            source_labels = ["__meta_kubernetes_pod_container_name"]
+            target_label  = "container"
+          }
+          rule {
+            // app.kubernetes.io/name, else the "app" label
+            source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_label_app"]
+            separator     = ";"
+            regex         = "^;*([^;]+).*$"
+            target_label  = "app"
+          }
+          rule {
+            source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+            separator     = "/"
+            target_label  = "job"
+          }
+        }
+
+        loki.source.kubernetes "pods" {
+          targets    = discovery.relabel.pods.output
+          forward_to = [loki.write.default.receiver]
+        }
+
+        // Kubernetes Events (scheduling, OOM kills, image pulls, ...), kept for the Loki retention instead of 1 hour.
+        // On a multi-node cluster every Alloy pod would send them: run this in one place only then.
+        loki.source.kubernetes_events "events" {
+          job_name   = "integrations/kubernetes/eventhandler"
+          log_format = "logfmt"
+          forward_to = [loki.write.default.receiver]
+        }
+
+        loki.write "default" {
+          endpoint {
+            url = "http://loki.logging.svc:3100/loki/api/v1/push"
+          }
+        }
+  configReloader:
+    resources:
+      requests: { cpu: 5m, memory: 16Mi }
+      limits: { memory: 64Mi }

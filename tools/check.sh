@@ -107,6 +107,8 @@ done
 img_tags(){ f=$(render_file "$1"); [ -s "$f" ] || return 1
   sed -n "s|^ *image: *[\"']\{0,1\}\([^ \"']*/\)\{0,1\}$2:\([^\"' ]*\).*|\2|p" "$f"; }
 lines(){ printf '%s' "$1" | grep -c .; }
+# dep_version <chart dir> <dependency name>: the version of that dependency in <chart dir>/Chart.yaml
+dep_version(){ awk -v n="$2" '$0 ~ "^ *- name: *" n " *$"{d=1; next} d && /^ *version:/{sub(/^ *version: *"?/, ""); sub(/["# ].*/, ""); print; exit}' "$1/Chart.yaml"; }
 
 echo "9. Vault server image and unsealer sidecar image have the same tag"
 # Exactly the server and the unsealer (tests are not rendered): one image means the unsealer is missing
@@ -120,8 +122,7 @@ else skip "platform/vault was not rendered (see check 3)"; fi
 echo "10. External Secrets image tags match the chart version"
 # The external-secrets chart version equals its appVersion, so the controller, webhook and cert-controller
 # images must all be v<chart version>.
-ec=$(awk '/^ *- name: external-secrets *$/{d=1; next} d && /^ *version:/{sub(/^ *version: *"?/, ""); sub(/["# ].*/, ""); print; exit}' \
-       platform/external-secrets/Chart.yaml)
+ec=$(dep_version platform/external-secrets external-secrets)
 if et=$(img_tags platform/external-secrets external-secrets/external-secrets); then
   eu=$(printf '%s\n' "$et" | sort -u)
   [ -n "$ec" ] && [ "$(lines "$et")" -ge 3 ] && [ "$eu" = "v$ec" ] && ok "external-secrets $ec, images $eu" \
@@ -148,6 +149,28 @@ if ft=$(img_tags apps/forgejo forgejo/forgejo); then
     && ok "forgejo/forgejo $fu (server and register-runner)" \
     || bad "apps/forgejo/values.yaml: forgejo.image.tag and the register-runner image must be the same Forgejo version (rendered: $(echo $fu), register-runner: ${ri:-missing})"
 else skip "apps/forgejo was not rendered (see check 3)"; fi
+
+echo "12. Prometheus Operator CRDs match the operator version"
+# platform/monitoring installs the CRDs from prometheus-operator-crds and the operator from kube-prometheus-stack.
+# The appVersion of both charts is the Prometheus Operator version; CRDs older or newer than the operator break it.
+# app_version <chart dir> <dependency name>: appVersion of the downloaded dependency charts/<name>-<version>.tgz
+app_version(){ v=$(dep_version "$1" "$2"); [ -n "$v" ] && [ -f "$1/charts/$2-$v.tgz" ] || return 1
+  helm show chart "$1/charts/$2-$v.tgz" 2>/dev/null | sed -n 's/^appVersion: *"\{0,1\}\([^" ]*\)"\{0,1\} *$/\1/p'; }
+if command -v helm >/dev/null 2>&1 && pc=$(app_version platform/monitoring prometheus-operator-crds) \
+   && ps=$(app_version platform/monitoring kube-prometheus-stack); then
+  [ -n "$pc" ] && [ "$pc" = "$ps" ] && ok "prometheus-operator $ps" \
+    || bad "platform/monitoring/Chart.yaml: prometheus-operator-crds (appVersion $pc) and kube-prometheus-stack (appVersion $ps) must ship the same Prometheus Operator version"
+else skip "platform/monitoring dependencies not downloaded (see check 3)"; fi
+
+echo "13. every rendered container image has a fixed tag (not latest)"
+# All images of the charts rendered by check 3, including the defaults of upstream charts.
+if ls "$RENDER"/*.yaml >/dev/null 2>&1; then
+  # Inline comments are stripped first so 'image: x # note' is checked too; '[ -]*' also matches '- image:'.
+  imgs=$(cat "$RENDER"/*.yaml | sed -e 's/[[:space:]]#.*$//' | sed -n "s/^[ -]*image: *[\"']\{0,1\}\([^\"' ]\{1,\}\)[\"']\{0,1\} *$/\1/p" | sort -u)
+  # no tag = no ':' after the last '/' and no digest
+  untagged=$(printf '%s\n' "$imgs" | grep -E ':latest(@|$)|^([^/@]*/)*[^/:@]+$')
+  [ -z "$untagged" ] && ok "$(lines "$imgs") images" || bad "image without a fixed tag: $(echo $untagged)"
+else skip "no chart was rendered (see check 3)"; fi
 
 echo
 [ $FAIL = 0 ] && echo "All checks passed." || { echo "Checks FAILED."; exit 1; }

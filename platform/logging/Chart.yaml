@@ -1,0 +1,12 @@
+apiVersion: v2
+name: logging
+version: 0.1.0
+description: Loki (log store) and Grafana Alloy (collects pod logs and Kubernetes events) - logs in Grafana
+dependencies:
+  # The OSS Loki chart is maintained in grafana-community since 2026 (the grafana/loki chart is for GEL only).
+  - name: loki
+    version: 18.17.1
+    repository: https://grafana-community.github.io/helm-charts
+  - name: alloy
+    version: 1.13.1
+    repository: https://grafana.github.io/helm-charts

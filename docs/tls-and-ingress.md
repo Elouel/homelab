@@ -90,3 +90,23 @@ spec:
 
 It could live in `platform/traefik/` (a small Helm chart like the other platform folders, with the manifest in `templates/`; Argo CD picks it up). Check the values against the bundled Traefik chart version first.
 A global redirect can interfere with HTTP-01 challenges. Test it with staging.
+
+Without it, Traefik serves every Ingress on port 80 as well as 443. To redirect a single Ingress, add a Traefik
+`Middleware` to its chart and reference it from the Ingress (as the Grafana and Vault Ingresses in `platform/monitoring` and
+`platform/vault` do). cert-manager's HTTP-01 solver Ingress has its own, more specific router, so challenges keep working:
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+# on the Ingress: NAMESPACE-MIDDLEWARE@kubernetescrd
+metadata:
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-redirect-https@kubernetescrd" .Release.Namespace }}
+```

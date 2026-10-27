@@ -1,0 +1,14 @@
+apiVersion: v2
+name: monitoring
+version: 0.1.0
+description: Prometheus, Alertmanager (Telegram) and Grafana - metrics, alerts and dashboards for the cluster and apps
+dependencies:
+  # CRDs (ServiceMonitor, PrometheusRule, ...) from their own chart: unlike the copy inside kube-prometheus-stack
+  # they are templates, so they can carry the ServerSideApply annotation (values.yaml). Keep the appVersion of
+  # both charts equal (tools/check.sh compares them).
+  - name: prometheus-operator-crds
+    version: 32.0.1
+    repository: https://prometheus-community.github.io/helm-charts
+  - name: kube-prometheus-stack
+    version: 92.10.1
+    repository: https://prometheus-community.github.io/helm-charts

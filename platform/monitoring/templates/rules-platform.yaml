@@ -1,0 +1,59 @@
+# Alerts for the homelab platform, on top of the kube-prometheus-stack defaults (node, pods, storage, ...).
+# They go to Telegram through Alertmanager (values.yaml: alertmanager.config).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: homelab-platform
+spec:
+  groups:
+    - name: certificates
+      rules:
+        - alert: CertificateExpiringSoon
+          # cert-manager renews 30 days before expiry, so 14 days left means renewal is failing
+          expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 24 * 3600
+          for: 1h
+          labels: { severity: warning }
+          annotations:
+            summary: "Certificate {{ "{{ $labels.namespace }}/{{ $labels.name }}" }} expires in less than 14 days"
+            description: "cert-manager has not renewed it. Check: kubectl -n {{ "{{ $labels.namespace }}" }} describe certificate {{ "{{ $labels.name }}" }}"
+        - alert: CertificateNotReady
+          expr: certmanager_certificate_ready_status{condition="False"} == 1
+          for: 30m
+          labels: { severity: warning }
+          annotations:
+            summary: "Certificate {{ "{{ $labels.namespace }}/{{ $labels.name }}" }} is not ready"
+            description: "See docs/tls-and-ingress.md (Debugging a certificate)."
+    - name: argocd
+      rules:
+        - alert: ArgoCDAppUnhealthy
+          expr: argocd_app_info{health_status=~"Degraded|Missing|Unknown"} == 1
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "Argo CD application {{ "{{ $labels.name }}" }} is {{ "{{ $labels.health_status }}" }}"
+            description: "Open it in the Argo CD UI or run: kubectl -n argocd get application {{ "{{ $labels.name }}" }}"
+        - alert: ArgoCDAppOutOfSync
+          # automated sync normally catches up within minutes; a long OutOfSync means the sync keeps failing
+          expr: argocd_app_info{sync_status="OutOfSync"} == 1
+          for: 30m
+          labels: { severity: warning }
+          annotations:
+            summary: "Argo CD application {{ "{{ $labels.name }}" }} has been OutOfSync for 30 minutes"
+            description: "Look at the last sync result in the Argo CD UI (docs/gitops.md)."
+    - name: logging
+      rules:
+        # absent(): also fires when the target has disappeared altogether (e.g. platform/logging not deployed)
+        - alert: LokiDown
+          expr: absent(up{namespace="logging", job="loki"} == 1)
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "Loki is down - logs are not being stored"
+            description: "Check: kubectl -n logging get pods; kubectl -n logging logs loki-0"
+        - alert: AlloyDown
+          expr: absent(up{namespace="logging", job="alloy"} == 1)
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "Alloy is down - pod logs are not being collected"
+            description: "Check: kubectl -n logging get pods; kubectl -n logging logs daemonset/alloy -c alloy"
